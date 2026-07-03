@@ -1002,6 +1002,69 @@ async def test_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_image_dispatch_includes_hidden_owner(monkeypatch):
+    """generate_image must forward the caller as _odysseus_owner so its gallery
+    row is owned — otherwise the owner-filtered gallery hides it (P2)."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    class FakeMcp:
+        def __init__(self):
+            self.calls = []
+
+        async def call_tool(self, name, args):
+            self.calls.append((name, args))
+            return {"output": "called", "exit_code": 0}
+
+    fake = FakeMcp()
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="generate_image", content='{"prompt": "a cat"}'),
+        owner="alice",
+    )
+
+    assert result["exit_code"] == 0
+    assert fake.calls == [
+        ("mcp__image_gen__generate_image", {"prompt": "a cat", "_odysseus_owner": "alice"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_dispatch_ignores_spoofed_owner(monkeypatch):
+    """A model-supplied _odysseus_owner in the tool args must never win — it's
+    overwritten by the trusted server-side owner, so it can't plant a gallery row
+    owned by another user."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    class FakeMcp:
+        def __init__(self):
+            self.calls = []
+
+        async def call_tool(self, name, args):
+            self.calls.append((name, args))
+            return {"output": "called", "exit_code": 0}
+
+    fake = FakeMcp()
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
+
+    await execute_tool_block(
+        SimpleNamespace(
+            tool_type="generate_image",
+            content='{"prompt": "a cat", "_odysseus_owner": "victim"}',
+        ),
+        owner="alice",
+    )
+
+    assert fake.calls == [
+        ("mcp__image_gen__generate_image", {"prompt": "a cat", "_odysseus_owner": "alice"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bare_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
     import src.tool_execution as tool_execution
     from src.tool_execution import execute_tool_block

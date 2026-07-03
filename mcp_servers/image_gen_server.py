@@ -50,6 +50,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     model_spec = arguments.get("model", "")
     size = arguments.get("size", "1024x1024")
     quality = arguments.get("quality", "medium")
+    # Injected server-side by tool_execution (not from the model) so the gallery
+    # row is owned; the gallery is owner-filtered. None in single-user mode.
+    owner = arguments.get("_odysseus_owner") or None
 
     if not prompt:
         return [TextContent(type="text", text="Error: Image prompt is required")]
@@ -97,6 +100,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         payload = {"model": model_id, "prompt": prompt, "n": 1, "size": size}
         if is_gpt_image:
             payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
+        else:
+            # Request bytes, not a URL: LocalAI returns a compose-internal URL
+            # (http://localai:8080/...) that the browser can't reach.
+            payload["response_format"] = "b64_json"
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
@@ -134,18 +141,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 try:
                     from src.database import SessionLocal, GalleryImage
                     db = SessionLocal()
-                    db.add(GalleryImage(
-                        id=str(uuid.uuid4()),
-                        filename=filename,
-                        prompt=prompt,
-                        model=model_id,
-                        size=size,
-                        quality=payload.get("quality", "medium"),
-                    ))
-                    db.commit()
-                    db.close()
-                except Exception:
-                    pass
+                    try:
+                        db.add(GalleryImage(
+                            id=str(uuid.uuid4()),
+                            filename=filename,
+                            prompt=prompt,
+                            model=model_id,
+                            size=size,
+                            quality=payload.get("quality", "medium"),
+                            owner=owner,
+                        ))
+                        db.commit()
+                    finally:
+                        db.close()
+                except Exception as e:
+                    # stderr, not stdout — stdout is the MCP protocol channel.
+                    print(f"[image_gen] gallery insert failed: {e}", file=sys.stderr)
 
             elif img.get("url"):
                 image_url = img["url"]

@@ -763,8 +763,13 @@ async function initImageSettings() {
     };
     const imageModels = [];
     (modelsData.items || []).forEach(item => {
-      (item.models || []).forEach(mid => {
-        if (_isInpaintModel(mid)) imageModels.push(mid);
+      // An image endpoint's models are all image models regardless of name; the
+      // inpaint-name allowlist below stays as a fallback for untyped endpoints.
+      const isImageEndpoint = item.model_type === 'image';
+      (item.models || []).concat(item.models_extra || []).forEach(mid => {
+        if ((isImageEndpoint || _isInpaintModel(mid)) && !imageModels.includes(mid)) {
+          imageModels.push(mid);
+        }
       });
     });
     sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
