@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from core.database import SessionLocal, ScheduledTask, TaskRun
 from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
@@ -24,6 +25,7 @@ from routes._validators import validate_remote_host, validate_ssh_port
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
 COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
+TASKS_READ_SCOPES = {"tasks:read"}
 TODO_READ_SCOPES = {"todos:read", "todos:write"}
 TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
@@ -247,6 +249,33 @@ def setup_codex_routes(
         args = dict(body)
         args["action"] = action
         return await do_manage_notes(json.dumps(args), owner=owner)
+
+    @router.get("/tasks/latest-run")
+    async def latest_task_run(request: Request, action: str):
+        """Latest run of a scheduled task, by built-in action name (not task_id —
+        built-in tasks get a generated UUID id but a fixed action string, and
+        callers outside the UI only know the action)."""
+        owner = _scope_owner(request, TASKS_READ_SCOPES)
+        db = SessionLocal()
+        try:
+            task = db.query(ScheduledTask).filter(
+                ScheduledTask.action == action, ScheduledTask.owner == owner
+            ).first()
+            if not task:
+                raise HTTPException(404, "Task not found")
+            run = db.query(TaskRun).filter(TaskRun.task_id == task.id) \
+                .order_by(TaskRun.started_at.desc()).first()
+            if not run:
+                return {"run": None}
+            return {"run": {
+                "id": run.id,
+                "status": run.status,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "result": run.result,
+                "error": run.error,
+            }}
+        finally:
+            db.close()
 
     @router.get("/emails")
     async def list_emails(
