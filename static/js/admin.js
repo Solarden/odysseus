@@ -2450,6 +2450,7 @@ const _TOKEN_SCOPES = [
   { key: 'memory:write',      label: 'Memory write',      detail: 'Write memory when enabled' },
   { key: 'cookbook:read',     label: 'Cookbook read',     detail: 'List cookbook tasks + tail their tmux output' },
   { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
+  { key: 'tasks:read',        label: 'Tasks read',        detail: 'Read a scheduled task\'s latest run (result/status) by action name' },
 ];
 
 function _renderTokenScopeRows(t) {
