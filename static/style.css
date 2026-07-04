@@ -39705,3 +39705,9 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* RTL: Hebrew/Arabic in assistant messages — auto direction per paragraph (mixed HE+EN). */
+.msg-ai .body :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
