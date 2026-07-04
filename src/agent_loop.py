@@ -276,6 +276,10 @@ _DOMAIN_RULES = {
 ## Integration/API rules
 - To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
 - Do not use shell, curl, or `app_api` to reach a user's connected integration when `api_call` is available.""",
+    "images": """\
+## Image generation rules
+- To create/generate/draw an image or picture, call the `generate_image` tool with the prompt.
+- Do not claim you are text-only or ask which platform you run on — the tool is available; use it.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -290,6 +294,7 @@ _DOMAIN_TOOL_MAP = {
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
+    "images": {"generate_image"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -1034,6 +1039,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
            r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
         domains.add("integrations")
+    # Image generation — "generate/create/draw an image/picture" (EN + PL). Without this the
+    # request matches no domain, is classified low-signal, and generate_image never reaches the
+    # schema filter (same failure mode as api_call above). Seeds generate_image via _DOMAIN_TOOL_MAP.
+    if has(r"\b(generate|create|make|draw|render|paint)\b.{0,20}\b(image|images|picture|pic|photo|art|artwork|drawing|illustration|wallpaper)\b",
+           r"\b(wygeneruj|stw[oó]rz|narysuj|zr[oó]b)\b.{0,20}\b(obraz\w*|obrazek|zdj[eę]ci\w*|grafik\w*|ilustracj\w*)\b",
+           r"\b(image generation|text[- ]to[- ]image|txt2img)\b"):
+        domains.add("images")
 
     low_signal = not continuation and not domains
     return {
