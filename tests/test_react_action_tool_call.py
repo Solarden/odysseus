@@ -78,16 +78,61 @@ def test_action_key_without_action_input_is_not_misparsed():
     assert strip_tool_blocks(text) == text
 
 
-def test_unknown_action_is_ignored():
-    text = '{"action": "definitely_not_a_tool", "action_input": "{}"}'
+def test_unknown_action_never_fires_but_is_stripped():
+    # An unknown/stray action ("something_else") must NOT fire a tool, but IS
+    # stripped from display — leaving it as raw JSON both looks broken and (in
+    # agent mode) resets the loop-breaker, feeding the runaway regeneration loop.
+    text = '{"action": "definitely_not_a_tool", "action_input": "{}", "thought": "hmm"}'
     assert parse_tool_blocks(text) == []
-    # Nothing recognized -> nothing stripped.
-    assert "definitely_not_a_tool" in strip_tool_blocks(text)
+    assert "definitely_not_a_tool" not in strip_tool_blocks(text)
+    assert "action_input" not in strip_tool_blocks(text)
 
 
-def test_final_answer_sentinel_is_left_alone():
-    # LangChain's terminal action; its action_input is the user-facing answer,
-    # not a tool. function_call_to_tool_block returns None -> untouched.
+def test_final_answer_sentinel_is_unwrapped_not_deleted():
+    # LangChain's terminal action; its action_input IS the user-facing answer.
+    # It must not fire a tool, and strip must UNWRAP it (keep the answer),
+    # never delete it.
     text = '{"action": "Final Answer", "action_input": "The capital of France is Paris."}'
     assert parse_tool_blocks(text) == []
-    assert "Paris" in strip_tool_blocks(text)
+    cleaned = strip_tool_blocks(text)
+    assert cleaned.strip() == "The capital of France is Paris."
+
+
+def test_session_meta_tools_never_fire_from_react_blob():
+    # A confused model emitting a session/meta action in a ReAct blob must NOT
+    # spawn/fork a chat (the "new session appears in the sidebar" bug). Not
+    # fired, but still stripped so it neither leaks nor feeds the loop.
+    for tool in ("create_session", "manage_session", "send_to_session",
+                 "list_sessions", "chat_with_model"):
+        text = f'{{"action": "{tool}", "action_input": "{{}}", "thought": "x"}}'
+        assert parse_tool_blocks(text) == [], tool
+        assert tool not in strip_tool_blocks(text), tool
+
+
+def test_content_tool_fires_even_when_a_meta_blob_is_present():
+    # A blocked meta blob before a content blob must not shadow the content one:
+    # generate_image still fires; the create_session blob is ignored + stripped.
+    text = (
+        '{"action": "create_session", "action_input": "{}", "thought": "spawn"}'
+        '{"action": "generate_image", "action_input": "{\\"prompt\\": \\"a cat\\"}"}'
+    )
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "generate_image"
+    assert "create_session" not in strip_tool_blocks(text)
+
+
+def test_multiple_blobs_fire_once_and_all_stripped():
+    # Mirrors the observed runaway: a weak model emits two identical
+    # generate_image blobs + a stray something_else in one response. Exactly ONE
+    # generate_image fires (no double image); ALL blobs are stripped so the
+    # displayed/looped text is empty (lets the loop-breaker converge).
+    text = (
+        '{"action": "generate_image", "action_input": "{\\"prompt\\": \\"a cat\\"}", "thought": "t1"}'
+        '{"action": "generate_image", "action_input": "{\\"prompt\\": \\"a cat\\"}", "thought": "t2"}'
+        '{"action": "something_else", "action_input": "{}", "thought": "t3"}'
+    )
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "generate_image"
+    assert strip_tool_blocks(text).strip() == ""
