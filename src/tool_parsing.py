@@ -566,6 +566,71 @@ def _parse_raw_web_json_lookup(text: str) -> Optional[tuple[ToolBlock, tuple[int
                 return block, (start, start + end)
     return None
 
+
+_REACT_ACTION_INPUT_RE = re.compile(r'"action_input"')
+
+
+def _expand_over_json_fence(text: str, start: int, end: int) -> tuple[int, int]:
+    """Grow a [start:end) span to swallow a ```...``` fence that tightly wraps
+    it, so stripping the JSON doesn't leave a dangling empty fence. Only
+    expands when BOTH an opening fence (immediately before) and a closing fence
+    (immediately after) are present."""
+    m_close = re.match(r"\s*```", text[end:])
+    m_open = re.search(r"```[^\n`]*\n\s*$", text[:start])
+    if m_open and m_close:
+        return m_open.start(), end + m_close.end()
+    return start, end
+
+
+def _parse_react_action_lookup(text: str) -> Optional[tuple[ToolBlock, tuple[int, int]]]:
+    """Recover a LangChain-style ReAct tool call leaked as raw JSON.
+
+    Open-weight models trained on the LangChain "structured chat" agent often
+    fall back to emitting the ReAct envelope instead of the fenced/native tool
+    channel::
+
+        {"action": "generate_image", "action_input": "{\\"prompt\\": \\"...\\"}"}
+
+    It is never an illustrative example, so — like [TOOL_CALL]/<invoke> markup —
+    recover it regardless of `skip_fenced`. Keyed on the presence of
+    ``action_input`` (never a real tool arg key; ``action`` alone IS used by
+    manage_notes / manage_calendar / ... so it can't be the signal), and only
+    accepted when ``action`` names a real tool — function_call_to_tool_block
+    returns None for unknown actions and the "Final Answer" sentinel, which are
+    then left untouched. ``action_input`` may be a JSON string or an object;
+    both are handed to the converter, which decodes either.
+    """
+    if not isinstance(text, str):
+        return None
+
+    from src.tool_schemas import function_call_to_tool_block
+
+    decoder = json.JSONDecoder()
+    for m in _REACT_ACTION_INPUT_RE.finditer(text):
+        # The envelope's opening brace precedes the "action_input" key. Scan a
+        # bounded window back for candidate '{' positions (nearest first) so
+        # untrusted input can't drive an unbounded rescan.
+        window_start = max(0, m.start() - 2000)
+        braces = [window_start + b.start()
+                  for b in re.finditer(r"\{", text[window_start:m.start()])]
+        for start in reversed(braces):
+            try:
+                parsed, end = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict) or "action_input" not in parsed:
+                continue
+            action = parsed.get("action")
+            if not isinstance(action, str) or not action.strip():
+                continue
+            action_input = parsed.get("action_input")
+            args = action_input if isinstance(action_input, str) else json.dumps(action_input)
+            block = function_call_to_tool_block(action.strip(), args)
+            if block:
+                return block, (start, start + end)
+    return None
+
+
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
 
@@ -1136,6 +1201,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 5b: LangChain ReAct envelope {"action","action_input"} leaked as
+    # raw JSON. Open-weight models fall back to it; it's never an illustrative
+    # example, so recover regardless of skip_fenced (like [TOOL_CALL]/<invoke>).
+    if not blocks:
+        react = _parse_react_action_lookup(text)
+        if react:
+            blocks.append(react[0])
+
     # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
     if not blocks and not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(text)
@@ -1187,6 +1260,14 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
         if raw_web_json:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
+    # Strip a leaked ReAct {"action","action_input"} envelope (always — mirrors
+    # parse_tool_blocks Pattern 5b; never an illustrative example). Swallow an
+    # enclosing ```json fence so no empty fence is left behind.
+    react = _parse_react_action_lookup(cleaned)
+    if react:
+        _, (start, end) = react
+        start, end = _expand_over_json_fence(cleaned, start, end)
+        cleaned = cleaned[:start] + cleaned[end:]
     cleaned = _PLAIN_UI_OPEN_PANEL_RE.sub("", cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = _strip_bare_invoke_markup(cleaned)
