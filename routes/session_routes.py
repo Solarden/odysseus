@@ -10,7 +10,7 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive, iso_utc
 from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
 
@@ -265,14 +265,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 folder_map[row.id] = row.folder
                 token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
                 important_map[row.id] = row.is_important or False
-                created_map[row.id] = row.created_at.isoformat() if row.created_at else None
-                updated_map[row.id] = row.updated_at.isoformat() if row.updated_at else None
+                created_map[row.id] = iso_utc(row.created_at)
+                updated_map[row.id] = iso_utc(row.updated_at)
                 # Fall back to updated_at then created_at so sessions that
                 # predate the column (or have no messages) still sort sanely.
                 last_msg_map[row.id] = (
-                    row.last_message_at.isoformat() if row.last_message_at
-                    else (row.updated_at.isoformat() if row.updated_at
-                          else (row.created_at.isoformat() if row.created_at else None))
+                    iso_utc(row.last_message_at) or iso_utc(row.updated_at)
+                    or iso_utc(row.created_at)
                 )
                 mode_map[row.id] = row.mode
                 msg_count_map[row.id] = row.message_count or 0
@@ -736,8 +735,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     "name": s.name,
                     "model": s.model,
                     "message_count": s.message_count or 0,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                    "created_at": iso_utc(s.created_at),
+                    "updated_at": iso_utc(s.updated_at),
                     "is_important": s.is_important,
                 })
             return {"sessions": sessions, "total": total}
@@ -979,7 +978,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             metadata={
                 "compacted": True,
                 "summarized_count": len(older),
-                "timestamp": utcnow_naive().isoformat(),
+                "timestamp": iso_utc(utcnow_naive()),
             },
         )
         new_history = [summary_msg] + recent

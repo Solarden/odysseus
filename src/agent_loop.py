@@ -2389,14 +2389,12 @@ async def stream_agent_loop(
     _active_document_relevant = _turn_targets_active_document(_intent, _last_user, active_document)
     _prompt_active_document = active_document if _active_document_relevant else None
     _direct_low_signal = (
-        _low_signal_turn
+        get_setting("agent_low_signal_fast_reply", False)
+        and _casual_low_signal_turn          # genuine greeting only, never "no domain matched"
         and not bool(_intent.get("continuation"))
         and not plan_mode
         and not approved_plan
         and not guide_only
-        and (_casual_low_signal_turn or not _active_document_relevant)
-        and (_casual_low_signal_turn or not active_email)
-        and (_casual_low_signal_turn or not workspace)
         and not forced_tools
         and not relevant_tools
     )

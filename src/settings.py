@@ -127,6 +127,11 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    # When enabled, ultra-short greetings ("hi", "hey") get a fast, cheap reply
+    # that skips the agent loop and caps output at 128 tokens. Default OFF: it
+    # previously misfired on any prompt that matched no domain keyword (incl.
+    # non-English), truncating real answers. See agent_loop._direct_low_signal.
+    "agent_low_signal_fast_reply": False,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell

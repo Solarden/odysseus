@@ -22,6 +22,16 @@ def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def iso_utc(dt):
+    """ISO-8601 with explicit 'Z' for a (naive) UTC datetime, so browsers
+    parse it as UTC instead of local time. Returns None for falsy input."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 class TimestampMixin:
     """Mixin that adds timestamp fields to models"""
     @declared_attr
@@ -167,10 +177,10 @@ class Session(TimestampMixin, Base):
             'endpoint_url': self.endpoint_url,
             'rag': self.rag,
             'archived': self.archived,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None,
-            'last_message_at': self.last_message_at.isoformat() if self.last_message_at else None,
+            'created_at': iso_utc(self.created_at),
+            'updated_at': iso_utc(self.updated_at),
+            'last_accessed': iso_utc(self.last_accessed),
+            'last_message_at': iso_utc(self.last_message_at),
             'message_count': self.message_count,
             'is_important': self.is_important,
             'folder': self.folder,
