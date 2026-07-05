@@ -184,7 +184,26 @@ function _renderHistoryMessage(msg, modelName) {
   wrap.appendChild(roleEl);
   wrap.appendChild(body);
   box.appendChild(wrap);
-  return wrap;
+
+  // Reconstruct generated-image bubbles from persisted tool_events so they
+  // survive a reload — matches the live stream and chatRenderer.addMessage.
+  // Without this an agent-generated image shows live but vanishes when you
+  // switch chats and come back. buildImageBubble returns a standalone .msg
+  // sibling, so append it to the box and return every node so the scroll-up
+  // pager can reposition them together.
+  const nodes = [wrap];
+  if (msg.role !== 'user' && Array.isArray(meta?.tool_events) && chatRenderer.buildImageBubble) {
+    for (const ev of meta.tool_events) {
+      if (ev && ev.image_url) {
+        const bubble = chatRenderer.buildImageBubble(
+          ev.image_url, ev.image_prompt, ev.image_model, ev.image_size, ev.image_quality, ev.image_id
+        );
+        box.appendChild(bubble);
+        nodes.push(bubble);
+      }
+    }
+  }
+  return nodes;
 }
 
 function _clearHistoryPager() {
@@ -232,8 +251,8 @@ function _installHistoryPager(id, pageInfo, modelName) {
       const newEls = [];
       for (const msg of data.history || []) {
         if (msg.role !== 'user' && msg.role !== 'assistant') continue;
-        const el = _renderHistoryMessage(msg, _historyPager.modelName);
-        if (el) newEls.push(el);
+        const els = _renderHistoryMessage(msg, _historyPager.modelName);
+        if (els) newEls.push(...(Array.isArray(els) ? els : [els]));
       }
       for (const el of newEls) {
         box.insertBefore(el, anchor || box.firstChild);
