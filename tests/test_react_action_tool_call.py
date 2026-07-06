@@ -42,6 +42,29 @@ def test_react_envelope_fires_generate_image():
         assert json.loads(blocks[0].content)["prompt"] == "a cat"
 
 
+def test_bare_string_action_input_fires_generate_image():
+    # LangChain's single-input form: action_input is the bare prompt string,
+    # NOT a JSON object. This regressed (json.loads of the prompt failed -> the
+    # call didn't fire and leaked as text). It must map to the tool's primary
+    # arg (prompt) and fire.
+    text = (
+        '{"action": "generate_image", "action_input": '
+        '"A mystical forest scene with hanging vines and glowing lanterns."}'
+    )
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "generate_image"
+    assert "mystical forest" in json.loads(blocks[0].content)["prompt"]
+    assert "action_input" not in strip_tool_blocks(text)
+
+
+def test_bare_string_action_input_maps_web_search_query():
+    text = '{"action": "web_search", "action_input": "best espresso machines 2026"}'
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+
+
 def test_react_envelope_recovered_even_when_native_gate_skips_fenced():
     # Never an illustrative example — recover regardless of skip_fenced.
     blocks = parse_tool_blocks(_STRINGIFIED, skip_fenced=True)

@@ -643,6 +643,34 @@ def _react_args(action_input) -> str:
     return action_input if isinstance(action_input, str) else json.dumps(action_input)
 
 
+def _react_block_for(action: str, action_input):
+    """Build a ToolBlock for a ReAct action, tolerating both structured and
+    bare-string action_input.
+
+    Models vary the shape: sometimes ``action_input`` is a JSON object (or a
+    JSON-object string) — ``{"prompt": "..."}`` — and sometimes it's the LangChain
+    single-input form, a BARE string that IS the argument — ``"a mystical
+    forest"`` for generate_image, a query for web_search, etc. The bare form is
+    the one that regressed: json.loads() of the prompt fails, so the call
+    silently didn't fire and leaked as text. Map the bare string onto the tool's
+    primary argument (reusing _MCP_JSON_PRIMARY_KEYS) so the normal converter can
+    shape it.
+    """
+    from src.tool_schemas import function_call_to_tool_block
+
+    if isinstance(action_input, str):
+        s = action_input.strip()
+        if s and s[0] not in "{[":
+            # Bare single-input string. Don't hand raw prose to the converter —
+            # it json.loads()-fails and error-logs; map it onto the tool's
+            # primary arg (prompt/query/...) so it shapes cleanly.
+            from src.tool_execution import _MCP_JSON_PRIMARY_KEYS
+            keys = _MCP_JSON_PRIMARY_KEYS.get(action)
+            return (function_call_to_tool_block(action, json.dumps({keys[0]: s}))
+                    if keys else None)
+    return function_call_to_tool_block(action, _react_args(action_input))
+
+
 def _parse_react_action_lookup(text: str) -> Optional[tuple[ToolBlock, tuple[int, int]]]:
     """First ReAct envelope whose ``action`` names a real tool, as
     ``(ToolBlock, span)``. Recovered regardless of `skip_fenced` (like
@@ -652,9 +680,8 @@ def _parse_react_action_lookup(text: str) -> Optional[tuple[ToolBlock, tuple[int
     """
     if not isinstance(text, str):
         return None
-    from src.tool_schemas import function_call_to_tool_block
     for action, action_input, start, end in _iter_react_envelopes(text):
-        block = function_call_to_tool_block(action, _react_args(action_input))
+        block = _react_block_for(action, action_input)
         if block and block.tool_type not in _REACT_BLOCKED_TOOLS:
             return block, (start, end)
     return None

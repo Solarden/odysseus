@@ -139,71 +139,30 @@ function _renderHistoryMessage(msg, modelName) {
   }
   const box = document.getElementById('chat-history');
   if (!box) return null;
-  if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
 
-  const wrap = document.createElement('div');
-  wrap.className = 'msg ' + (msg.role === 'user' ? 'msg-user' : 'msg-ai');
-  wrap.dataset.raw = displayContent;
-  if (meta?._db_id) wrap.dataset.dbId = meta._db_id;
-
-  const roleEl = document.createElement('div');
-  roleEl.className = 'role';
-  if (msg.role === 'user') {
-    roleEl.textContent = 'You';
-  } else {
-    const pair = chatRenderer.replyModelPair ? chatRenderer.replyModelPair(modelName, meta) : {};
-    const resolved = pair.actualModel || pair.requestedModel || modelName;
-    roleEl.textContent = chatRenderer.modelRouteLabel
-      ? chatRenderer.modelRouteLabel(pair.requestedModel, resolved)
-      : (resolved || 'Odysseus');
-    if (chatRenderer.applyModelColor) chatRenderer.applyModelColor(roleEl, resolved);
+  // Delegate to the canonical live renderer (chatRenderer.addMessage) so a
+  // reloaded turn rebuilds the FULL structure — collapsed tool-execution nodes,
+  // the "View thinking process" box, multi-round follow-up text, and image
+  // bubbles — from metadata.round_texts/tool_events/thinking. The old inline
+  // renderer here drew text only, so all of that vanished on reload (and the raw
+  // tool blob showed instead of the collapsed node). The pre-processing above
+  // (history content transform, user-message filtering, vision/doc-edit) is the
+  // only history-specific logic addMessage doesn't do — it already handles user
+  // attachments, thinking, timestamps and _fromHistory. The archived-session
+  // peek already renders history through addMessage, so this path is proven.
+  // ponytail: one renderer instead of a divergent second one that kept losing
+  // features on reload (images, tool nodes, thinking).
+  const before = box.childElementCount;
+  try {
+    chatRenderer.addMessage(msg.role, displayContent, modelName, meta);
+  } catch (e) {
+    console.warn('addMessage failed for history message:', e, msg);
+    return null;
   }
-  const timestamp = meta?.timestamp;
-  if (timestamp) {
-    const ts = document.createElement('span');
-    ts.className = 'msg-time';
-    try {
-      ts.textContent = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      ts.textContent = '';
-    }
-    roleEl.appendChild(ts);
-  }
-
-  const body = document.createElement('div');
-  body.className = 'body';
-  body.innerHTML = markdownModule.processWithThinking(
-    markdownModule.squashOutsideCode(markdownModule.renderContent(displayContent || ''))
-  );
-  if (msg.role === 'user' && Array.isArray(meta?.attachments) && meta.attachments.length) {
-    if (chatRenderer.buildAttachCards) {
-      body.appendChild(chatRenderer.buildAttachCards(meta.attachments));
-    }
-  }
-
-  wrap.appendChild(roleEl);
-  wrap.appendChild(body);
-  box.appendChild(wrap);
-
-  // Reconstruct generated-image bubbles from persisted tool_events so they
-  // survive a reload — matches the live stream and chatRenderer.addMessage.
-  // Without this an agent-generated image shows live but vanishes when you
-  // switch chats and come back. buildImageBubble returns a standalone .msg
-  // sibling, so append it to the box and return every node so the scroll-up
-  // pager can reposition them together.
-  const nodes = [wrap];
-  if (msg.role !== 'user' && Array.isArray(meta?.tool_events) && chatRenderer.buildImageBubble) {
-    for (const ev of meta.tool_events) {
-      if (ev && ev.image_url) {
-        const bubble = chatRenderer.buildImageBubble(
-          ev.image_url, ev.image_prompt, ev.image_model, ev.image_size, ev.image_quality, ev.image_id
-        );
-        box.appendChild(bubble);
-        nodes.push(bubble);
-      }
-    }
-  }
-  return nodes;
+  // A single turn can append several nodes (text bubble + tool thread + image
+  // bubbles); return them all so the scroll-up pager repositions them together.
+  const added = Array.prototype.slice.call(box.children, before);
+  return added.length ? added : null;
 }
 
 function _clearHistoryPager() {

@@ -1359,7 +1359,18 @@ def setup_chat_routes(
                         elif chunk == "data: [DONE]\n\n":
                             _has_tool_events = bool((last_metrics or {}).get("tool_events"))
                             if full_response or _has_tool_events:
-                                _response_to_save = full_response or "Done."
+                                # Strip leaked tool markup (ReAct {action,action_input}
+                                # blobs, [TOOL_CALL]/<invoke>/DSML) from the SAVED content
+                                # so it doesn't render as raw JSON on reload. The tool
+                                # already ran (tool_events carry it); the model's prose
+                                # survives. skip_fenced=True so an illustrative ```python /
+                                # ```bash code block in prose (which classifies as an
+                                # executable fence) is NOT deleted from the saved answer —
+                                # real fenced tool calls are already stripped per-round into
+                                # round_texts, which is what reload renders.
+                                from src.agent_tools import strip_tool_blocks
+                                _clean = strip_tool_blocks(full_response, skip_fenced=True) if full_response else ""
+                                _response_to_save = _clean.strip() or "Done."
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, _response_to_save, last_metrics,
                                     character_name=ctx.preset.character_name,
