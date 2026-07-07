@@ -65,6 +65,39 @@ def test_bare_string_action_input_maps_web_search_query():
     assert blocks[0].tool_type == "web_search"
 
 
+def test_openai_style_tool_calls_blob_fires_and_strips():
+    # Observed leak: model emits an OpenAI-style tool_calls array as TEXT
+    # (no action_input), then claims it acted. Must fire generate_image and be
+    # stripped, keeping the follow-up prose.
+    text = (
+        '{"action": "none", "tool_calls": [{"function": "generate_image", '
+        '"args": {"prompt": "an angry cat"}}]}Over here comes your angry cat!'
+    )
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "generate_image"
+    assert json.loads(blocks[0].content)["prompt"] == "an angry cat"
+    cleaned = strip_tool_blocks(text)
+    assert "tool_calls" not in cleaned and "generate_image" not in cleaned
+    assert "Over here comes your angry cat!" in cleaned
+
+
+def test_tool_calls_openai_standard_function_object_shape():
+    # {"function": {"name","arguments"}} — the canonical OpenAI shape.
+    text = ('{"tool_calls": [{"function": {"name": "generate_image", '
+            '"arguments": "{\\"prompt\\": \\"a fox\\"}"}}]}')
+    blocks = parse_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "generate_image"
+    assert json.loads(blocks[0].content)["prompt"] == "a fox"
+
+
+def test_tool_calls_blob_cannot_fire_session_meta_tools():
+    text = '{"tool_calls": [{"function": "create_session", "args": {}}]}'
+    assert parse_tool_blocks(text) == []
+    assert "create_session" not in strip_tool_blocks(text)
+
+
 def test_react_envelope_recovered_even_when_native_gate_skips_fenced():
     # Never an illustrative example — recover regardless of skip_fenced.
     blocks = parse_tool_blocks(_STRINGIFIED, skip_fenced=True)

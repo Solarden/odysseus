@@ -1775,6 +1775,13 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       try { window.documentModule.clearSelection(); } catch {}
     }
     currentSessionId = id;
+    // Opening a real session voids any deferred "new chat" intent. A stale
+    // _pendingChat left set here (e.g. the default-model pending chat armed
+    // during the null-session window on load) makes the NEXT send materialize a
+    // brand-new session and fork the conversation — this is the "switch model,
+    // hard refresh, chat splits in two" bug. Clear it whenever a real session
+    // becomes current.
+    _pendingChat = null;
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
     // URL hash — the user complained that coming back to Odysseus kept

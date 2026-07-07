@@ -2316,6 +2316,16 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+# Expensive, side-effecting tools that must not run twice with IDENTICAL args in
+# a single turn. A repeat is a malfunction — weak models (e.g. gemma-4-abliterated)
+# re-emit the same generate_image call every round — not intent. For these we trip
+# the loop-breaker on the FIRST identical repeat instead of waiting for the generic
+# 4-round stuck streak, so a broken model produces ONE image, not four. Distinct
+# prompts (a real "make 3 variations") never share a call signature, so genuine
+# batches are unaffected.
+_REPEAT_ONCE_TOOLS = frozenset({"generate_image"})
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -2891,6 +2901,11 @@ async def stream_agent_loop(
     requested_model = model
     actual_model = model
     total_tool_calls = 0  # for budget enforcement
+    # Prompts already sent to generate_image THIS turn. Hard backstop against the
+    # runaway where a weak model re-emits the same generate_image call every round
+    # (independent of the loop-breaker / signature deque): an exact-repeat prompt
+    # is skipped, never regenerated. Distinct prompts still run.
+    _generated_image_keys: set = set()
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
     # stuck firing the same tool call over and over with no text — burns
@@ -3495,8 +3510,17 @@ async def stream_agent_loop(
         # Distinct calls to one tool (a real batch) are legitimate work, so we
         # count identical call signatures, not raw per-tool-type totals.
         _runaway = _detect_runaway_call(_call_freq)
-        if _stuck_rounds >= 4 or _runaway:
-            reason = (f"calling {_runaway} with identical arguments over and over" if _runaway
+        # An expensive side-effecting tool (image gen) repeated with identical
+        # args is a malfunction on the FIRST repeat — don't wait for the 4-round
+        # streak and burn 4 duplicate images. _is_repeat means this exact call
+        # signature already fired this turn.
+        _repeat_expensive = _is_repeat and any(
+            b.tool_type in _REPEAT_ONCE_TOOLS for b in tool_blocks
+        )
+        if _stuck_rounds >= 4 or _runaway or _repeat_expensive:
+            reason = ("re-issuing " + tool_blocks[0].tool_type + " with identical arguments"
+                      if _repeat_expensive
+                      else f"calling {_runaway} with identical arguments over and over" if _runaway
                       else "repeating the same tool calls without new progress")
             logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
             # The model has been executing tools, so its results are already
@@ -3579,7 +3603,20 @@ async def stream_agent_loop(
             else:
                 cmd_display = full_command
 
-            if tool_policy and tool_policy.blocks(block.tool_type):
+            _img_dup = (block.tool_type == "generate_image"
+                        and full_command in _generated_image_keys)
+            if _img_dup:
+                # Hard backstop: never run generate_image twice with identical
+                # args in one turn (weak models re-emit the same call forever).
+                # Skip execution, tell the model it's done, and converge. Only an
+                # EXACT repeat is blocked — distinct prompts still generate.
+                logger.info("[agent] round %s: skipping duplicate generate_image (same prompt already generated this turn)", round_num)
+                result = {
+                    "results": "That image was already generated for this exact prompt in this turn. Do NOT call generate_image again — write your final reply to the user now.",
+                    "exit_code": 0,
+                }
+                _force_answer = True
+            elif tool_policy and tool_policy.blocks(block.tool_type):
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
                     "error": tool_policy.reason_for(block.tool_type),
@@ -3783,6 +3820,13 @@ async def stream_agent_loop(
                 )
             elif "error" in result:
                 output_text = _truncate(result["error"])
+
+            # Record a SUCCESSFUL generate_image so an exact re-emit later this
+            # turn is skipped (see _img_dup). Only on success — a failed image
+            # stays retryable with the same prompt; a failing repeat loop is
+            # bounded by the loop-breaker instead.
+            if block.tool_type == "generate_image" and not _img_dup and result.get("exit_code") == 0:
+                _generated_image_keys.add(full_command)
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}

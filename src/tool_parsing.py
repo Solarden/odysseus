@@ -713,6 +713,94 @@ def _strip_react_action_blocks(text: str) -> str:
     return text
 
 
+_TOOL_CALLS_KEY_RE = re.compile(r'"tool_calls"')
+
+
+def _extract_tool_call(call) -> Optional[tuple]:
+    """From one ``tool_calls`` entry, return ``(name, args_json_str)`` or None.
+    Tolerates the shapes weak / text-path models emit:
+      {"function": "generate_image", "args": {...}}
+      {"function": {"name": "...", "arguments": "{...}"}}   (OpenAI standard)
+      {"name": "...", "arguments": {...}}
+    """
+    if not isinstance(call, dict):
+        return None
+    fn = call.get("function")
+    if isinstance(fn, dict):
+        name = fn.get("name")
+        args = fn.get("arguments", fn.get("args"))
+    elif isinstance(fn, str):
+        name = fn
+        args = call.get("args", call.get("arguments"))
+    else:
+        name = call.get("name")
+        args = call.get("arguments", call.get("args"))
+    if not isinstance(name, str) or not name.strip():
+        return None
+    args_str = args if isinstance(args, str) else json.dumps(args if args is not None else {})
+    return name.strip(), args_str
+
+
+def _iter_tool_calls_envelopes(text: str):
+    """Yield ``(calls, start, end)`` for each top-level JSON object carrying a
+    ``tool_calls`` array — the OpenAI-style structured tool call leaked as TEXT,
+    e.g. ``{"action":"none","tool_calls":[{"function":"generate_image","args":
+    {"prompt":"..."}}]}``. Text-path models emit this instead of a native tool
+    call; without recovery it neither fires nor gets stripped (prints as raw
+    JSON, and the model then claims it acted). ``calls`` is a list of
+    ``(name, args_json_str)``. Bounded backscan per ``"tool_calls"`` occurrence
+    (ReDoS-safe), mirroring _iter_react_envelopes.
+    """
+    if not isinstance(text, str):
+        return
+    decoder = json.JSONDecoder()
+    for m in _TOOL_CALLS_KEY_RE.finditer(text):
+        window_start = max(0, m.start() - 2000)
+        braces = [window_start + b.start()
+                  for b in re.finditer(r"\{", text[window_start:m.start()])]
+        for start in reversed(braces):
+            try:
+                parsed, rel_end = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            tcs = parsed.get("tool_calls")
+            if not isinstance(tcs, list) or not tcs:
+                continue
+            calls = [c for c in (_extract_tool_call(tc) for tc in tcs) if c]
+            if calls:
+                yield calls, start, start + rel_end
+            break
+
+
+def _parse_tool_calls_lookup(text: str) -> List[ToolBlock]:
+    """ToolBlocks for the first leaked ``tool_calls`` envelope whose calls map to
+    real, non-blocked tools. Mirrors native tool_calls, which may carry several."""
+    from src.tool_schemas import function_call_to_tool_block
+    for calls, _start, _end in _iter_tool_calls_envelopes(text):
+        blocks = []
+        for name, args in calls:
+            block = function_call_to_tool_block(name, args)
+            if block and block.tool_type not in _REACT_BLOCKED_TOOLS:
+                blocks.append(block)
+        if blocks:
+            return blocks
+    return []
+
+
+def _strip_tool_calls_envelopes(text: str) -> str:
+    """Remove every leaked ``tool_calls`` JSON envelope from display/persisted
+    text (keeping surrounding prose). Mirrors _strip_react_action_blocks."""
+    envs = list(_iter_tool_calls_envelopes(text))
+    if not envs:
+        return text
+    for _calls, start, end in sorted(envs, key=lambda e: e[1], reverse=True):
+        start, end = _expand_over_json_fence(text, start, end)
+        text = text[:start] + text[end:]
+    return text
+
+
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
 
@@ -1291,6 +1379,12 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if react:
             blocks.append(react[0])
 
+    # Pattern 5c: OpenAI-style {"tool_calls":[{"function","args"}]} leaked as raw
+    # JSON (text-path models emit the structured call as text). Never an
+    # illustrative example, so recover regardless of skip_fenced, like 5b.
+    if not blocks:
+        blocks.extend(_parse_tool_calls_lookup(text))
+
     # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
     if not blocks and not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(text)
@@ -1347,6 +1441,8 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # blob (not just the first) keeps raw JSON out of the UI and lets the agent
     # loop-breaker see a spam-only round as "no progress" so it converges.
     cleaned = _strip_react_action_blocks(cleaned)
+    # Same for leaked OpenAI-style {"tool_calls":[...]} envelopes (Pattern 5c).
+    cleaned = _strip_tool_calls_envelopes(cleaned)
     cleaned = _PLAIN_UI_OPEN_PANEL_RE.sub("", cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = _strip_bare_invoke_markup(cleaned)

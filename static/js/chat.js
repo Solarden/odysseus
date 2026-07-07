@@ -708,8 +708,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
     }
 
-    // Materialize pending session (deferred from model click) on first message
-    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    // Materialize pending session (deferred from model click) on first message.
+    // Only when there is NO active session — a pending chat left set alongside a
+    // real current session (stale default-model pending after load) must NOT
+    // spawn a new session and fork the conversation; send to the active one.
+    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()
+        && !sessionModule.getCurrentSessionId()) {
       const ok = await sessionModule.materializePendingSession();
       if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
     }
