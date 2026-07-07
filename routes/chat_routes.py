@@ -596,6 +596,10 @@ def setup_chat_routes(
         # shell disabled).
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        # Did the user's words explicitly ask for a web lookup/search (intent
+        # category "web"), vs. just the allow_web_search toggle? Drives the
+        # web-focused tool policy and forced web tools further down.
+        _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
         if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
