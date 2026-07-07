@@ -3506,6 +3506,7 @@ const INTG_TYPES = {
   codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
   claude:  { label: 'Claude',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
+  token:   { label: 'Token',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M21 2l-9.6 9.6"/><path d="M15.5 7.5l3 3"/></svg>' },
 };
 
 // Config shared by the Codex Agent and Claude Agent forms. Both use the same
@@ -3563,6 +3564,18 @@ mkdir -p ~/.claude
 curl -fsSL -H "Authorization: Bearer $ODYSSEUS_API_TOKEN" "$ODYSSEUS_URL/api/claude/plugin.zip" -o /tmp/odysseus-claude-skill.zip
 python3 -m zipfile -e /tmp/odysseus-claude-skill.zip ~/.claude/
 python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py capabilities`,
+  },
+  // Generic API token — not tied to a Codex/Claude plugin. Reuses showAgentForm
+  // for the name + scope picker + create/reveal/revoke; buildSetup:null hides the
+  // plugin-install quickstart (there's nothing to install for a bare token).
+  token: {
+    label: 'API Token',
+    word: 'API',
+    namePrefix: '',
+    defaultName: 'API Token',
+    pluginPath: null,
+    setupDescription: '',
+    buildSetup: null,
   },
 };
 
@@ -3662,9 +3675,11 @@ async function initUnifiedIntegrations() {
         // Legacy / un-prefixed scoped tokens fall back to Codex for backwards compat.
         agentType = 'codex';
       }
-      if (!agentType) continue;
+      // Any other token (companion/notification, ntfy bridge, n8n/Make, …)
+      // renders as a generic Token card instead of being silently dropped.
+      if (!agentType) agentType = 'token';
       const detail = `${tok.token_prefix || 'token'}... - ${scopes.join(', ') || 'chat'}`;
-      items.push({ type: agentType, id: tok.id, name: tok.name || (agentType === 'claude' ? 'Claude Agent' : 'Codex Agent'), detail, enabled: true, data: tok });
+      items.push({ type: agentType, id: tok.id, name: tok.name || 'API Token', detail, enabled: true, data: tok });
     }
     // Vaultwarden removed as an integration option.
     return items;
@@ -3740,7 +3755,7 @@ async function initUnifiedIntegrations() {
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'codex' || type === 'claude' || type === 'token') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
         formEl.style.display = 'none';
@@ -3759,6 +3774,7 @@ async function initUnifiedIntegrations() {
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'codex') showAgentForm('codex', editId);
     else if (type === 'claude') showAgentForm('claude', editId);
+    else if (type === 'token') showAgentForm('token', editId);
     else if (type === 'vault') showVaultForm();
   }
 
@@ -5268,7 +5284,7 @@ async function initUnifiedIntegrations() {
       }).join('');
     };
     const origin = window.location.origin || '';
-    const setupForToken = (token) => cfg.buildSetup(origin, token);
+    const setupForToken = (token) => (cfg.buildSetup ? cfg.buildSetup(origin, token) : '');
 
     // Inline editor for the existing token the user clicked into (current).
     // Shows the rename input, the prefix/last-used, and scope toggles that
@@ -5290,7 +5306,7 @@ async function initUnifiedIntegrations() {
         <div class="settings-col">
           ${editExistingHtml}
           <div id="uf-codex-prompt" style="display:${current ? 'none' : 'block'};padding:6px 0;">
-            <div style="font-size:11px;opacity:0.7;margin-bottom:6px;">Name this ${esc(cfg.word)} agent so you can tell it apart from other ones (e.g. "${esc(cfg.defaultName)} — laptop").</div>
+            <div style="font-size:11px;opacity:0.7;margin-bottom:6px;">Name this ${cfg.buildSetup ? esc(cfg.word) + ' agent' : esc(cfg.defaultName)} so you can tell it apart from other ones (e.g. "${esc(cfg.defaultName)} — laptop").</div>
             <input type="text" id="uf-codex-name-input" class="settings-select" placeholder="${esc(cfg.defaultName)}" style="width:100%;font-size:12px;padding:6px 8px;">
           </div>
           <div id="uf-codex-pending" style="display:none;align-items:center;gap:8px;padding:6px 0;font-size:11px;opacity:0.7;"></div>
@@ -5298,6 +5314,7 @@ async function initUnifiedIntegrations() {
             <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Token</div>
 
             <div style="font-size:11px;opacity:0.62;margin-bottom:4px;">Copy this token, it won't be shown again.</div>
+            ${!cfg.buildSetup ? `<div style="font-size:11px;line-height:1.4;margin-bottom:8px;padding:6px 8px;border:1px solid color-mix(in srgb, var(--color-error, #ff5555) 40%, transparent);border-radius:4px;background:color-mix(in srgb, var(--color-error, #ff5555) 8%, transparent);"><strong>Treat this like a password.</strong> Scopes only limit the <code>/api/codex/*</code> API — this token can still drive the full agent (including shell) via chat. Keep it secret; revoke if it leaks.</div>` : ''}
             <div style="position:relative;">
               <code id="uf-codex-token" style="display:block;word-break:break-all;font-size:11px;padding:6px 30px 6px 8px;background:rgba(0,0,0,0.08);border-radius:4px;"></code>
               <button type="button" class="admin-btn-sm" id="uf-codex-copy-token" title="Copy token" aria-label="Copy token" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;">
@@ -5305,24 +5322,25 @@ async function initUnifiedIntegrations() {
               </button>
             </div>
 
+            ${cfg.buildSetup ? `
             <div style="margin-top:14px;font-weight:600;font-size:11px;margin-bottom:4px;">Quickstart &mdash; simply paste directly in your terminal.</div>
             <div style="font-size:11px;opacity:0.62;margin-bottom:6px;">${cfg.setupDescription}</div>
-            <pre style="margin:0;white-space:pre;overflow-x:auto;max-height:220px;overflow-y:auto;font-size:10px;line-height:1.45;padding:8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;width:100%;box-sizing:border-box;"><code id="uf-codex-setup-code"></code></pre>
+            <pre style="margin:0;white-space:pre;overflow-x:auto;max-height:220px;overflow-y:auto;font-size:10px;line-height:1.45;padding:8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;width:100%;box-sizing:border-box;"><code id="uf-codex-setup-code"></code></pre>` : ''}
 
             <div style="margin-top:14px;display:flex;align-items:center;gap:8px;">
               <span style="font-weight:600;font-size:11px;">Configure access</span>
               <span style="flex:1"></span>
-              <button type="button" class="admin-btn-sm" id="uf-codex-copy-setup" title="Copy setup" aria-label="Copy setup" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
+              ${cfg.buildSetup ? `<button type="button" class="admin-btn-sm" id="uf-codex-copy-setup" title="Copy setup" aria-label="Copy setup" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 <span>Copy</span>
-              </button>
+              </button>` : ''}
               <button type="button" class="admin-btn-sm" id="uf-codex-toggle-config" aria-expanded="false" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
                 <svg id="uf-codex-toggle-config-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg>
                 <span>Configure</span>
               </button>
             </div>
             <div id="uf-codex-config-body" style="display:none;">
-              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">Toggle which Odysseus tools this agent can use. New agents start with chat only.</div>
+              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">Toggle which Odysseus tools this token can use. New tokens start with chat only.</div>
               <div id="uf-codex-inline-scopes"></div>
             </div>
           </div>
@@ -5443,8 +5461,8 @@ async function initUnifiedIntegrations() {
       const tokenId = formEl.dataset.createdTokenId;
       if (!tokenId) return;
       const ok = window.styledConfirm
-        ? await window.styledConfirm(`Revoke this ${cfg.word} agent token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })
-        : confirm(`Revoke this ${cfg.word} agent token? Integrations using it will lose access.`);
+        ? await window.styledConfirm(`Revoke this ${cfg.buildSetup ? cfg.word + ' agent' : 'API'} token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })
+        : confirm(`Revoke this ${cfg.buildSetup ? cfg.word + ' agent' : 'API'} token? Integrations using it will lose access.`);
       if (!ok) return;
       const msg = el('uf-codex-msg');
       try {
@@ -5651,6 +5669,7 @@ async function initUnifiedIntegrations() {
   if (addBtn) {
     const _typeOptions = [
       ['api', 'API Service'],
+      ['token', 'API Token'],
       ['caldav', 'CalDAV Calendar'],
       ['claude', 'Claude Agent'],
       ['codex', 'Codex Agent'],
