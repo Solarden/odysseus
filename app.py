@@ -172,6 +172,10 @@ from starlette.responses import JSONResponse as _JSONResponse
 REQUEST_HARD_TIMEOUT = float(os.getenv("REQUEST_HARD_TIMEOUT", "45"))
 _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
+    "/api/v1/chat",         # sync-chat (cron clients: dns-watch/steal-alert). A cold model load can
+                            # take 45-90s, blowing this hard timeout and 504-ing before the response
+                            # (with session_id) reaches the client — orphaning the session it can no
+                            # longer archive. Self-bounded by llm_call_async(timeout=120) in the handler.
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
     "/api/model/download",  # tmux setup may run pip installs
