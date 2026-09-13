@@ -41398,6 +41398,8 @@ body.settings-sidebar-resize-active {
   .settings-sidebar-toggle {
     display: none;
   }
+}
+
 /* RTL: Hebrew/Arabic in assistant messages — auto direction per paragraph (mixed HE+EN). */
 .msg-ai .body :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
   unicode-bidi: plaintext;
