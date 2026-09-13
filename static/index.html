@@ -2564,7 +2564,7 @@
 <script type="module" src="/static/js/tourAutoplay.js"></script>
 <script type="module" src="/static/js/fileHandler.js"></script>
 <script type="module" src="/static/js/voiceRecorder.js"></script>
-<script type="module" src="/static/js/models.js?v=20260715startupcalm2"></script>  <!-- This must come BEFORE app.js -->
+<script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
 <script type="module" src="/static/js/rag.js"></script>
 <script type="module" src="/static/js/presets.js"></script>
 <script type="module" src="/static/js/search.js"></script>
@@ -2572,7 +2572,7 @@
 <script type="module" src="/static/js/tts-ai.js"></script>
 <script type="module" src="/static/js/document.js?v=20260815approvalsave1"></script>
 <script type="module" src="/static/js/gallery.js?v=20260708match1"></script>
-<script type="module" src="/static/js/chatRenderer.js?v=20260819approvalcontrol1"></script>
+<script type="module" src="/static/js/chatRenderer.js"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js?v=20260819approvalcontrol1"></script>
   <script type="module" src="/static/js/chat.js?v=20260819approvalcontrol1"></script>
@@ -2581,7 +2581,10 @@
 <script type="module" src="/static/js/search-chat.js"></script>
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js?v=20260815approvalsave1"></script>
+<!-- No ?v= cache-buster here: six other modules import this as './settings.js', and a query
+     string makes it a DIFFERENT module URL, so the browser evaluates settings.js twice. Two
+     instances means two `initialized` flags and every dropdown populated twice. -->
+<script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/app.js?v=20260815toolapproval4"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260715freshroot3"></script>
