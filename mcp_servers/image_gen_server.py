@@ -6,6 +6,7 @@ MCP server exposing image generation via OpenAI-compatible APIs.
 
 import asyncio
 import base64
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -19,6 +20,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.constants import GENERATED_IMAGES_DIR
 
 server = Server("image_gen")
+
+# ollama on the compose network. The image backend and ollama both see the GPU and do NOT fit on it
+# together: a warm 26B chat model is ~15GB of a 16GB card, so a generation started underneath one
+# dies with a CUDA error — which the model then reports to the user as a broken image server.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
+
+
+async def _free_vram(client):
+    """Unload whatever ollama is holding, then wait for the card to actually come back.
+
+    Unconditional rather than a reaction to a failure: this process is about to ask for the whole
+    GPU, so the conflict is known in advance and there is nothing to diagnose. It is deliberately
+    NOT a tool the model can call — the model cannot tell this failure apart from a broken backend
+    (it read one as "the server needs restarting"), and one that evicts the chat model on a guess is
+    worse than one that cannot.
+
+    Best-effort: if ollama is unreachable (Game Mode shuts WSL down) the generation goes ahead and
+    fails the way it would have anyway. It waits on /api/ps rather than sleeping a fixed number,
+    because the unload returns before the driver has released the memory.
+    """
+    try:
+        for m in (await client.get(f"{OLLAMA_URL}/api/ps", timeout=5)).json().get("models", []):
+            await client.post(f"{OLLAMA_URL}/api/generate",
+                              json={"model": m["name"], "keep_alive": 0}, timeout=10)
+
+        for _ in range(10):
+            if not (await client.get(f"{OLLAMA_URL}/api/ps", timeout=5)).json().get("models", []):
+                return
+
+            await asyncio.sleep(1)
+    except Exception as e:
+        # stderr, not stdout — stdout is the MCP protocol channel.
+        print(f"[image_gen] could not free VRAM first: {e}", file=sys.stderr)
+
 
 
 @server.list_tools()
@@ -112,6 +147,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             payload["response_format"] = "b64_json"
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
+            await _free_vram(client)
             resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
