@@ -1142,7 +1142,8 @@ async def test_generate_image_dispatch_includes_hidden_owner(monkeypatch):
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
     monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
 
-    desc, result = await execute_tool_block(
+    desc, result = await _execute_without_run_context(
+        execute_tool_block,
         SimpleNamespace(tool_type="generate_image", content='{"prompt": "a cat"}'),
         owner="alice",
     )
@@ -1173,7 +1174,8 @@ async def test_generate_image_dispatch_ignores_spoofed_owner(monkeypatch):
     monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
     monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
 
-    await execute_tool_block(
+    await _execute_without_run_context(
+        execute_tool_block,
         SimpleNamespace(
             tool_type="generate_image",
             content='{"prompt": "a cat", "_odysseus_owner": "victim"}',

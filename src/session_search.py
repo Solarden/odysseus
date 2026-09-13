@@ -13,6 +13,7 @@ from sqlalchemy import text
 from core.database import ChatMessage as DBChatMessage
 from core.database import Session as DBSession
 from core.database import SessionLocal
+from core.database import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class SessionSearchResult:
 
 
 def _iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
+    return iso_utc(value)
 
 
 def _message_to_context(msg: DBChatMessage) -> dict[str, Any]:

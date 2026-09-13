@@ -2604,9 +2604,20 @@ export function addMessage(role, content, modelName, metadata) {
       const firstRound = (toolsByRound[0] || []).length ? 0 : 1;
       for (let roundNum = firstRound; roundNum <= maxRound; roundNum++) {
         const r = roundNum - 1;
-        const txt = r >= 0
+        let txt = r >= 0
           ? resolveDocumentPlaceholderLinks((roundTexts[r] || '').trim(), metadata)
           : '';
+        // Rebuild the "View thinking process" box on the first round when thinking
+        // was captured to metadata (reasoning channel / extracted) rather than left
+        // inline in the round text. Without this it vanishes on reload for tool-first
+        // turns, where the first round text is just the stripped tool call (empty).
+        // Keyed on the first ITERATION, not on r === 0: r is -1 when firstRound is 0,
+        // and that round is exactly the empty tool-first case this exists for. Guard
+        // against a double box when the round text already carries a <think> block.
+        if (roundNum === firstRound && metadata && metadata.thinking && !/<think/i.test(txt)) {
+          txt = '<think' + (metadata.thinking_time ? ' time="' + metadata.thinking_time + '"' : '') + '>'
+              + metadata.thinking + '</think>' + (txt ? '\n\n' + txt : '');
+        }
 
         if (txt) {
           const wrap = document.createElement('div');
