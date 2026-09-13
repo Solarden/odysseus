@@ -38,7 +38,9 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# The built-in servers use the 1.x decorator API (@server.list_tools). mcp 2.x dropped it,
+# and unpinned this took every built-in MCP server down on the next rebuild (2026-09-13).
+mcp>=1.30,<2.0
 pyotp
 qrcode[pil]
 croniter
