@@ -219,19 +219,53 @@ def email_tool_policy_names(tool_name: str) -> frozenset:
     return frozenset((tool_name,))
 
 
-def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
+def is_public_blocked_tool(tool_name: Optional[str], owner: Optional[str] = None) -> bool:
     """Return True when a non-admin/public user must not execute this tool.
 
     This is a security gate, so it fails CLOSED: a malformed non-string tool
     name can't be matched against the blocklist or the ``mcp__`` namespace, so
     it is treated as blocked rather than silently allowed through. ``None`` /
     empty string means there is no tool to gate.
+
+    ``mcp__<server>__<tool>`` passes only when ``owner`` was granted that
+    server (``mcp_servers_for_owner``); with no owner every MCP tool is blocked.
     """
     if tool_name is None or tool_name == "":
         return False
     if not isinstance(tool_name, str):
         return True
-    return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith("mcp__")
+    if tool_name in NON_ADMIN_BLOCKED_TOOLS:
+        return True
+    if tool_name.startswith("mcp__"):
+        server_id = tool_name[len("mcp__"):].split("__", 1)[0]
+        return server_id not in mcp_servers_for_owner(owner)
+    return False
+
+
+def mcp_servers_for_owner(owner: Optional[str]) -> Set[str]:
+    """MCP server ids a non-admin owner was granted via ``allowed_mcp_servers``.
+
+    Empty for admins (never gated, so there is nothing to lift) and on any
+    error. Built-in servers are dropped even when listed: ``email`` is
+    privileged admin functionality (SECURITY.md) and must not be grantable.
+    """
+    if not owner:
+        return set()
+    try:
+        from core.auth import AuthManager
+        from src.mcp_manager import McpManager
+
+        auth = AuthManager()
+        if auth.is_admin(owner):
+            return set()
+        granted = auth.get_privileges(owner).get("allowed_mcp_servers") or []
+        return {
+            sid for sid in granted
+            if isinstance(sid, str) and sid and not McpManager.is_builtin(sid)
+        }
+    except Exception as exc:
+        logger.warning("Unable to read MCP server grants for owner=%r: %s", owner, exc)
+        return set()
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:

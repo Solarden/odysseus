@@ -35,6 +35,7 @@ from src.tool_security import (
     blocked_tools_for_owner,
     delegated_credential_blocked_tools,
     email_tool_policy_names,
+    mcp_servers_for_owner,
     plan_mode_disabled_tools,
 )
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy
@@ -3519,11 +3520,18 @@ async def stream_agent_loop(
         # owner is the admin who minted the token, so the call above returns
         # nothing. Cap the run regardless of who it acts for.
         public_blocked_tools.update(delegated_credential_blocked_tools())
+    granted_mcp_servers: Set[str] = set()
     if public_blocked_tools:
         disabled_tools.update(public_blocked_tools)
         # MCP tools are namespaced dynamically, so hide all MCP schemas for
-        # public/non-admin users rather than trying to enumerate every tool.
-        mcp_mgr = None
+        # public/non-admin users rather than trying to enumerate every tool —
+        # unless an admin granted this owner specific servers, in which case
+        # every other server is hidden via the disabled map below. A bearer
+        # token run never gets a grant.
+        if not delegated_credential:
+            granted_mcp_servers = mcp_servers_for_owner(owner)
+        if not granted_mcp_servers:
+            mcp_mgr = None
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The
@@ -3609,6 +3617,13 @@ async def stream_agent_loop(
             _last_user[:80],
         )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+    # The tool index is process-global and rebuilt only per MCP generation, so
+    # it must not be built from one owner's grant-filtered view.
+    _mcp_index_map = {sid: set(names) for sid, names in _mcp_disabled_map.items()}
+    if mcp_mgr and granted_mcp_servers:
+        for _tool in mcp_mgr.get_all_tools():
+            if _tool["server_id"] not in granted_mcp_servers:
+                _mcp_disabled_map.setdefault(_tool["server_id"], set()).add(_tool["name"])
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
         direct_messages = (
@@ -3922,7 +3937,7 @@ async def stream_agent_loop(
                 if mcp_mgr:
                     try:
                         await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_disabled_map),
+                            asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_index_map),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                     except asyncio.TimeoutError:

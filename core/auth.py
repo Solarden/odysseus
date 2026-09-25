@@ -37,6 +37,9 @@ DEFAULT_PRIVILEGES = {
     # we need a dedicated flag to express "this user may use no models at all"
     # distinctly from "this user has no restriction".
     "block_all_models": False,
+    # McpServer ids a non-admin may call despite the public-user MCP block
+    # (enforced in src/tool_security.py). Built-in servers are never grantable.
+    "allowed_mcp_servers": [],
 }
 
 # Admins get everything
