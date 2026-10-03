@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
+from src.task_scheduler import HOUSEKEEPING_DEFAULTS, _resolve_task_timezone, compute_next_run
 from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
@@ -26,6 +27,7 @@ from routes._validators import validate_remote_host, validate_ssh_port
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
 COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
 TASKS_READ_SCOPES = {"tasks:read"}
+TASKS_WRITE_SCOPES = {"tasks:write"}
 TODO_READ_SCOPES = {"todos:read", "todos:write"}
 TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
@@ -276,6 +278,46 @@ def setup_codex_routes(
             }}
         finally:
             db.close()
+
+    def _set_task_status(request: Request, action: str, status: str) -> dict:
+        """Pause or resume a scheduled task by built-in action name, for callers
+        outside the UI (a home-automation "bench mode" that keeps the GPU quiet).
+        Resume waits for the next cron tick; missed runs are not caught up.
+        Built-in tasks only: a user task's action can be run_local/ssh_command,
+        which a token holder must not be able to re-arm."""
+        owner = _scope_owner(request, TASKS_WRITE_SCOPES)
+        if action not in HOUSEKEEPING_DEFAULTS:
+            raise HTTPException(404, "Task not found")
+        db = SessionLocal()
+        try:
+            task = db.query(ScheduledTask).filter(
+                ScheduledTask.action == action, ScheduledTask.owner == owner
+            ).first()
+            if not task:
+                raise HTTPException(404, "Task not found")
+            task.status = status
+            if status == "active" and (task.trigger_type or "schedule") == "schedule":
+                # tz_name too, unlike /api/tasks/{id}/resume: without it the first
+                # run after a resume is computed in naive UTC.
+                task.next_run = compute_next_run(
+                    task.schedule, task.scheduled_time,
+                    task.scheduled_day, task.scheduled_date,
+                    cron_expression=task.cron_expression,
+                    tz_name=_resolve_task_timezone(db, task),
+                )
+            db.commit()
+            return {"ok": True, "status": task.status,
+                    "next_run": task.next_run.isoformat() + "Z" if task.next_run else None}
+        finally:
+            db.close()
+
+    @router.post("/tasks/pause")
+    async def pause_task(request: Request, action: str):
+        return _set_task_status(request, action, "paused")
+
+    @router.post("/tasks/resume")
+    async def resume_task(request: Request, action: str):
+        return _set_task_status(request, action, "active")
 
     @router.get("/emails")
     async def list_emails(

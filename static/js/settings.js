@@ -5114,6 +5114,7 @@ async function initUnifiedIntegrations() {
       { key: 'cookbook:read', label: 'Cookbook', detail: 'List cookbook tasks + tail their tmux output (debug a model serve from outside the UI)' },
       { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Launch and stop cookbook serve tasks. Powerful: runs SSH commands on your configured servers, bounded by the same allowlist the UI uses (vllm/python3/sglang/llama-server/...)' },
       { key: 'tasks:read', label: 'Tasks', detail: "Read a scheduled task's latest run (result/status) by action name" },
+      { key: 'tasks:write', label: 'Tasks write', detail: 'Pause and resume a scheduled task by action name' },
     ];
     // Strict name-prefix match keeps Codex and Claude tokens in their own forms.
     const agentTokens = (Array.isArray(tokens) ? tokens : []).filter(tok =>
