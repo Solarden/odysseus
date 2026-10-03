@@ -1213,6 +1213,22 @@ def _looks_like_local_computer_request(text: str) -> bool:
     return bool(text.strip() and _LOCAL_COMPUTER_REFERENCE_RE.search(text))
 
 
+# A terminal toolset cannot serve these domains, and the domain classifier is a
+# stronger signal than _LOCAL_COMPUTER_REFERENCE_RE, whose "on/from <word>" branch
+# also matches plain prose ("a fisherman on his boat", "an email from Anna").
+_NON_TERMINUS_DOMAINS = frozenset({"images", "email", "notes_calendar_tasks", "contacts"})
+
+
+def _wants_terminus_toolset(query: str, workspace: Optional[str], domains) -> bool:
+    if set(domains or ()) & _NON_TERMINUS_DOMAINS:
+        return False
+
+    return bool(
+        (workspace and _looks_like_workspace_coding_request(query))
+        or _looks_like_local_computer_request(query)
+    )
+
+
 def _explicitly_references_missing_workspace(text: str, workspace: Optional[str]) -> bool:
     if workspace:
         return False
@@ -4011,13 +4027,7 @@ async def stream_agent_loop(
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
         if (
-            (
-                (
-                    workspace
-                    and _looks_like_workspace_coding_request(_retrieval_query or _last_user)
-                )
-                or _looks_like_local_computer_request(_retrieval_query or _last_user)
-            )
+            _wants_terminus_toolset(_retrieval_query or _last_user, workspace, _intent.get("domains"))
             and not _active_document_relevant
             and not active_email
         ):

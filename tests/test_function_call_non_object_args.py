@@ -109,7 +109,7 @@ class _FakeMcpManager:
     "mcp__builtin_browser__list_emails",
 ])
 def test_misprefixed_email_call_is_routed_to_email_server(tool_name, monkeypatch):
-    monkeypatch.setattr("src.tool_schemas.get_mcp_manager", lambda: _FakeMcpManager([]))
+    monkeypatch.setitem(function_call_to_tool_block.__globals__, "get_mcp_manager", lambda: _FakeMcpManager([]))
 
     block = function_call_to_tool_block(tool_name, '{"max_results": 5}')
 
@@ -123,7 +123,7 @@ def test_misprefixed_email_call_is_routed_to_email_server(tool_name, monkeypatch
     "mcp__acme_mail__send_email",
 ])
 def test_real_mcp_tool_is_not_rerouted(tool_name, monkeypatch):
-    monkeypatch.setattr("src.tool_schemas.get_mcp_manager", lambda: _FakeMcpManager([tool_name]))
+    monkeypatch.setitem(function_call_to_tool_block.__globals__, "get_mcp_manager", lambda: _FakeMcpManager([tool_name]))
 
     block = function_call_to_tool_block(tool_name, "{}")
 
