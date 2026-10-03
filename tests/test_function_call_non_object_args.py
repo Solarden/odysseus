@@ -93,3 +93,39 @@ def test_ui_control_open_email_reply_preserves_structured_body():
     assert block is not None
     assert block.tool_type == "ui_control"
     assert block.content == "open_email_reply 3228 INBOX reply Hi Andy,\n\nNo thank you.\n\nBest,"
+
+
+class _FakeMcpManager:
+    def __init__(self, qualified_names):
+        self._names = qualified_names
+
+    def get_all_tools(self):
+        return [{"qualified_name": n} for n in self._names]
+
+
+@pytest.mark.parametrize("tool_name", [
+    "mcp__list_emails",
+    "mcp__9114454f__list_emails",
+    "mcp__builtin_browser__list_emails",
+])
+def test_misprefixed_email_call_is_routed_to_email_server(tool_name, monkeypatch):
+    monkeypatch.setattr("src.tool_schemas.get_mcp_manager", lambda: _FakeMcpManager([]))
+
+    block = function_call_to_tool_block(tool_name, '{"max_results": 5}')
+
+    assert block is not None
+    assert block.tool_type == "mcp__email__list_emails"
+    assert block.content == '{"max_results": 5}'
+
+
+@pytest.mark.parametrize("tool_name", [
+    "mcp__9114454f__HassTurnOn",
+    "mcp__acme_mail__send_email",
+])
+def test_real_mcp_tool_is_not_rerouted(tool_name, monkeypatch):
+    monkeypatch.setattr("src.tool_schemas.get_mcp_manager", lambda: _FakeMcpManager([tool_name]))
+
+    block = function_call_to_tool_block(tool_name, "{}")
+
+    assert block is not None
+    assert block.tool_type == tool_name

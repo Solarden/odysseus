@@ -15,6 +15,7 @@ from typing import Optional
 from src.agent_tools import ToolBlock, TOOL_TAGS
 from src.tool_parsing import _TOOL_NAME_MAP
 from src.tool_security import BUILTIN_EMAIL_TOOLS
+from src.tool_utils import get_mcp_manager
 
 logger = logging.getLogger(__name__)
 
@@ -1367,9 +1368,34 @@ def _repair_document_function_args(tool_type: str, arguments: str) -> Optional[d
     return None
 
 
+def _misprefixed_email_tool(tool_type: str) -> Optional[str]:
+    """Builtin email tool hidden behind an invented `mcp__…__` prefix, else None.
+
+    Email tools are offered under bare names while every other MCP tool is
+    `mcp__<server>__<tool>`, and local models copy that shape onto them
+    (`mcp__list_emails`, `mcp__<home-assistant id>__list_emails`), failing a
+    round per guess. A name some connected server really exposes is never
+    rerouted.
+    """
+    if not tool_type.startswith("mcp__") or tool_type.startswith("mcp__email__"):
+        return None
+    tool = tool_type.rpartition("__")[2]
+    if tool not in BUILTIN_EMAIL_TOOLS:
+        return None
+    manager = get_mcp_manager()
+    if manager and any(t["qualified_name"] == tool_type for t in manager.get_all_tools()):
+        return None
+
+    return tool
+
+
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
     tool_type = _TOOL_NAME_MAP.get(name, name)
+    email_tool = _misprefixed_email_tool(tool_type)
+    if email_tool:
+        logger.warning(f"Rerouting misprefixed email call {name} -> mcp__email__{email_tool}")
+        name, tool_type = email_tool, f"mcp__email__{email_tool}"
     try:
         if not arguments or (isinstance(arguments, str) and not arguments.strip()):
             args = {}
