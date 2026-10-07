@@ -1,4 +1,7 @@
 """Per-user MCP server grants: a non-admin reaches only the servers an admin listed."""
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 import core.auth
@@ -57,24 +60,63 @@ def test_unreadable_grants_fail_closed(monkeypatch):
     assert is_public_blocked_tool(f"mcp__{GRANTED}__turn_on", "house") is True
 
 
+def _manager(servers):
+    from src.agent_runtime.remote_resources import configuration_incarnation, endpoint_identity
+    from src.mcp_manager import McpManager
+
+    manager = McpManager()
+    for server in servers:
+        session = SimpleNamespace(call_tool=AsyncMock(return_value=SimpleNamespace(
+            content=[SimpleNamespace(text="ok")], isError=False)))
+        url = f"https://{server}.test/mcp"
+        manager._sessions[server] = session
+        manager._tools[server] = [{"name": "turn_on"}]
+        manager._resource_endpoints[server] = (endpoint_identity(url), configuration_incarnation(url))
+        manager._register_resource_connection(server, session)
+
+    return manager
+
+
+@pytest.mark.parametrize(
+    "owner, admin, granted",
+    [
+        ("house", False, {f"mcp__{GRANTED}__turn_on"}),
+        ("root", True, {f"mcp__{GRANTED}__turn_on", "mcp__deadbeef__turn_on"}),
+        ("stranger", False, set()),
+    ],
+)
+def test_request_authority_admits_owner_mcp_tools(fake_auth, monkeypatch, owner, admin, granted):
+    import src.tool_security as ts
+    from src import agent_tools
+    from src.agent_runtime.authority import create_request_authority
+
+    monkeypatch.setattr(agent_tools, "get_mcp_manager", lambda: _manager([GRANTED, "deadbeef", "email"]))
+    monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda o: admin)
+
+    authority = create_request_authority("turn on the lamp", owner=owner)
+
+    assert {g.tool for g in authority.grants if g.tool.startswith("mcp__")} == granted
+
+
 @pytest.mark.asyncio
 async def test_granted_server_is_dispatched_for_non_admin(fake_auth, monkeypatch):
     # Resolve from the live module: other tests re-import src.tool_execution
     # (see test_edit_file.py), so a top-level reference could miss the patch.
     import src.tool_execution as te
+    import src.tool_security as ts
+    from src import agent_tools
+    from src.agent_runtime.authority import create_request_authority
 
-    calls = []
-
-    class _Mcp:
-        async def call_tool(self, name, args):
-            calls.append(name)
-            return {"output": "ok", "exit_code": 0}
-
+    manager = _manager([GRANTED, "deadbeef"])
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: False)
-    monkeypatch.setattr(te, "get_mcp_manager", lambda: _Mcp())
+    monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: False)
+    monkeypatch.setattr(te, "get_mcp_manager", lambda: manager)
+    monkeypatch.setattr(agent_tools, "get_mcp_manager", lambda: manager)
+    authority = create_request_authority("turn on the lamp", owner="house")
 
-    for tool, reached in ((f"mcp__{GRANTED}__turn_on", True), ("mcp__deadbeef__turn_on", False)):
+    for server, reached in ((GRANTED, True), ("deadbeef", False)):
         _desc, result = await te.execute_tool_block(
-            ToolBlock(tool, "{}"), owner="house", security_context=te.NO_TOOL_SECURITY_CONTEXT
+            ToolBlock(f"mcp__{server}__turn_on", "{}"), owner="house",
+            request_authority=authority, security_context=te.NO_TOOL_SECURITY_CONTEXT,
         )
-        assert (tool in calls) is reached, (tool, result)
+        assert manager._sessions[server].call_tool.await_count == int(reached), (server, result)
