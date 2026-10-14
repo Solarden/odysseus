@@ -182,6 +182,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 # Save to gallery
                 try:
                     from src.database import SessionLocal, GalleryImage
+                    owner = str(arguments.get("_odysseus_owner") or "").strip() or None
                     db = SessionLocal()
                     try:
                         db.add(GalleryImage(
@@ -196,6 +197,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                         db.commit()
                     finally:
                         db.close()
+                    if owner:
+                        try:
+                            from src.generated_images import register_generated_image
+                            register_generated_image(filename, owner)
+                        except Exception:
+                            pass
                 except Exception as e:
                     # stderr, not stdout — stdout is the MCP protocol channel.
                     print(f"[image_gen] gallery insert failed: {e}", file=sys.stderr)
