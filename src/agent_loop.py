@@ -24006,7 +24006,10 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
-            if candidate_context <= 8192:
+            # 0 means the window is unproven (ollama reports none), not small.
+            # shortcut: an unproven window gets the default budget, so a server whose real
+            # n_ctx is below it truncates the prompt; prove ollama's window to close that.
+            if 0 < candidate_context <= 8192:
                 # Small local servers often tokenize chat wrappers and tool
                 # results much more generously than our rough estimator. Keep
                 # substantial headroom for those wrappers and generation so a

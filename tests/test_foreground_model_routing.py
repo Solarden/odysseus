@@ -3550,6 +3550,50 @@ def test_agent_fallback_request_uses_candidate_context_budget(
     assert metrics["context_length"] == backup_context
 
 
+@pytest.mark.parametrize(("proven_context", "small_server_clamp"), [(0, False), (4096, True)])
+def test_unproven_context_window_is_not_clamped_as_a_small_server(
+    monkeypatch, proven_context, small_server_clamp,
+):
+    from src.context_budget import DEFAULT_BUDGET
+    import src.context_compactor as context_compactor
+    import src.model_context as model_context
+
+    trim_windows = []
+
+    def fake_trim(messages, window, reserve_tokens=0):
+        trim_windows.append(window)
+        return list(messages)
+
+    async def fake_stream(candidates, messages, **kwargs):
+        for index, candidate in enumerate(candidates):
+            await kwargs["candidate_request_factory"](index, *candidate)
+        yield 'data: {"delta": "answer"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    monkeypatch.setattr(
+        model_context, "budget_context_for_model",
+        lambda url, model, fallback=0: proven_context,
+    )
+    monkeypatch.setattr(context_compactor, "trim_for_context", fake_trim)
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+
+    _collect(agent_loop.stream_agent_loop(
+        "http://ollama:11434/v1", "gemma4:26b-a4b-it-qat",
+        [{"role": "user", "content": "generate an image of a cute cat"}],
+        headers={}, max_rounds=1, _is_teacher_run=True,
+    ))
+
+    assert trim_windows
+    if small_server_clamp:
+        # Unclamped, the window is capped at exactly the context length.
+        assert max(trim_windows) < proven_context
+    else:
+        assert min(trim_windows) >= DEFAULT_BUDGET
+
+
 def test_agent_persists_only_answering_route_compaction(monkeypatch):
     primary = ("https://selected.example/v1", "selected-model", {})
     backup = ("https://backup.example/v1", "backup-model", {})
