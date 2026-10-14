@@ -968,6 +968,29 @@ def image_edit_followup(message: str, history: Iterable, *, image_attachment=Fal
     return False
 
 
+# "generate cute cat image": the subject sits before the noun. Gap words exclude the
+# prepositions that make the image an attachment ("a report with an image") and the
+# qualifiers of a technical image ("a docker image"); the noun must close the request
+# or open its description, so "make my image smaller" stays an edit.
+_SUBJECT_BEFORE_IMAGE = re.compile(
+    r'^\s*' + _REQUEST_PREFIX + r'(?:generate|create|make)\s+(?:(?:me|us)\s+)?'
+    r'(?:(?:an?|the|new|some)\s+)?'
+    r'(?:(?!(?:sure|with|of|for|from|in|on|and|to|this|that|it|docker|container|disk|iso|vm|'
+    r'virtual|os|boot|system|base|backup|kernel|firmware|cloud|server|snapshot|raw|build)\b)'
+    r'[\w\'-]+\s+){1,3}'
+    r'(?:images?|pictures?|illustrations?|drawings?|paintings?)'
+    r'(?=\s*(?:$|[.!?,;:]|\d|(?:of|with|for|showing|in|as|please|pls|now|using|like)\b))',
+    re.I,
+)
+# shortcut: a stoplist of figurative objects; extend it when a false hit shows up.
+_DRAW_SUBJECT = re.compile(
+    r'^\s*' + _REQUEST_PREFIX + r'(?:draw|paint)\s+(?:(?:me|us)\s+)?(?:an?|some)\s+'
+    r'(?!(?:conclusion|comparison|line|distinction|parallel|blank|cards?|diagram|chart|graph|'
+    r'table|flowchart|plan|crowd|bath|picture\s+of\s+(?:how|what|why))\b)\w',
+    re.I,
+)
+
+
 def image_creation_tools(message: str) -> frozenset[str] | None:
     """Leading visual creation or a standalone visual brief owns generation."""
     text = _normalize_request_lead(message)
@@ -976,6 +999,8 @@ def image_creation_tools(message: str) -> frozenset[str] | None:
         r'(?:(?:me|us)\s+)?(?:(?:an?|the|new)[.,]?\s+)*'
         r'(?:(?:youtube|video|blog|custom)\s+)?'
         r'(?:images?|pictures?|illustrations?|thumbnails?|logos?|posters?)\b', text, re.I)
+    if not match:
+        match = _SUBJECT_BEFORE_IMAGE.match(text) or _DRAW_SUBJECT.match(text)
     if not match:
         # Chat users commonly give a visual brief without an imperative verb.
         # Anchor at the start so search, description, and document requests

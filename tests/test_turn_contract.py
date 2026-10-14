@@ -1839,6 +1839,14 @@ async def test_dispatcher_enforces_bound_contract_without_external_mutations(mon
     ("Generate an image of a cat", "image_generation", "generate_image"),
     ("Create an image of a calendar", "image_generation", "generate_image"),
     ("Can you make me a picture of a cat?", "image_generation", "generate_image"),
+    ("generate cute cat image", "image_generation", "generate_image"),
+    ("generate cute cat image, please", "image_generation", "generate_image"),
+    ("generate a cute cat image in watercolor style", "image_generation", "generate_image"),
+    ("generate cute cat image 4k", "image_generation", "generate_image"),
+    ("Make a funny dog picture for my mom", "image_generation", "generate_image"),
+    ("create a watercolor landscape painting.", "image_generation", "generate_image"),
+    ("draw a cute cat", "image_generation", "generate_image"),
+    ("Please paint me a sunset over the sea", "image_generation", "generate_image"),
     ("Upscale this image", "image_editing", "edit_image"),
     ("Please remove the background from this photo", "image_editing", "edit_image"),
     ("Transcribe this audio file", "transcription", "transcribe_media"),
@@ -1897,6 +1905,27 @@ def test_required_media_tool_unavailable_cannot_substitute_shell(family, tool, u
 ])
 def test_media_mapping_does_not_guess_unsupported_actions(message, expected):
     assert requested_capabilities(message) == expected
+
+
+@pytest.mark.parametrize("message", [
+    "Make sure the image loads",
+    "make sure the image.",
+    "Create a report with an image",
+    "Generate the release notes for this image",
+    "Draw a conclusion from these numbers",
+    "draw a diagram of the network",
+    "Paint the fence green",
+    "create a docker image",
+    "make a disk image",
+    "create an ISO image",
+    "generate a VM disk image",
+    "make my image smaller",
+    "sketch a proposal for the API",
+    "draw a card",
+    "paint a picture of how this works",
+])
+def test_image_generation_ignores_non_generation_wording(message):
+    assert "image_generation" not in requested_capabilities(message)
 
 
 def test_media_combined_requests_and_referential_repeat():
