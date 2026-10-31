@@ -856,7 +856,10 @@ def test_unattended_optioned_clarification_forces_best_supported_answer(monkeypa
     )))
 
     assert len(seen) == 3
-    assert any("12 shots" in str(e.get("delta") or "") for e in events)
+    shown = "".join(str(e.get("delta") or e.get("content") or "") for e in events
+                    if "delta" in e or e.get("type") == "final_response")
+    assert "12 shots" in shown
+    assert "Would you like me to" not in shown
 
 
 def test_emits_loop_breaker_triggered_when_loop_breaker_trips(monkeypatch):

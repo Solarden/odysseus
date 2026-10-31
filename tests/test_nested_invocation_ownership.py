@@ -365,6 +365,26 @@ async def test_done_text_is_not_a_child_terminator(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_teacher_is_judged_on_the_final_response_not_withheld_drafts(monkeypatch):
+    import src.agent_loop as al
+    te, calls = teacher_settings(monkeypatch)
+
+    async def child(**kwargs):
+        yield event({'delta': "I don't have a tool for lights."})
+        yield event({'type': 'final_response', 'content': 'The ceiling light is off.'})
+        yield DONE
+
+    monkeypatch.setattr(al, 'stream_agent_loop', child)
+    chunks = [c async for c in te.run_teacher_inline(
+        student_endpoint_url='http://student.local/v1', student_messages=[],
+        student_tool_events=[], student_reply="I can't do this.",
+    )]
+
+    assert not any(p.get('type') == 'escalation_failed' for p in payloads(chunks))
+    assert calls == ['distill']
+
+
+@pytest.mark.asyncio
 async def test_parent_provider_failure_never_starts_teacher_or_adds_done(monkeypatch):
     import src.teacher_escalation as te
     calls = []

@@ -315,14 +315,20 @@ def with_completion_gate(func):
                 yield provider_error
                 return
             presentation_replaced = False
-            if not provider_error and not has_final and requirements.required_artifacts:
+            if not provider_error and not has_final:
                 terminal_texts = next((event.get('data', {}).get('round_texts')
                                        for event in reversed(metrics_events)
                                        if isinstance(event.get('data', {}).get('round_texts'), list)
                                        and all(isinstance(text, str) for text in event['data']['round_texts'])), None)
                 if terminal_texts is not None:
                     terminal_answer = '\n\n'.join(text for text in terminal_texts if text.strip())
-                    if terminal_answer != answer:
+                    # Without declared artifacts, only a content difference counts: rounds are
+                    # joined with blank lines the deltas never carried, and an empty
+                    # round_texts must not erase prose that was streamed.
+                    retracted = (terminal_answer != answer if requirements.required_artifacts
+                                 else bool(terminal_answer)
+                                 and re.sub(r'\s+', '', terminal_answer) != re.sub(r'\s+', '', answer))
+                    if retracted:
                         # The loop can retract a rejected round while retaining
                         # its live deltas. Do not resurrect those buffered drafts
                         # after recovery. Terminal prose still passes this gate.

@@ -49,6 +49,40 @@ async def test_terminal_round_text_cannot_override_an_explicit_final_response():
 
 
 @pytest.mark.asyncio
+async def test_chat_turn_does_not_release_retracted_rounds():
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'I have no tool for that.'})
+        yield _event({'type': 'agent_step', 'round': 2})
+        yield _event({'delta': 'Still no tool for that.'})
+        yield _event({'type': 'agent_step', 'round': 3})
+        yield _event({'delta': 'The light is off.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': ['The light is off.']}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'turn off the ceiling light'}])]
+    assert 'no tool' not in ''.join(chunks)
+    final = next(data for _, data in _frames(chunks) if isinstance(data, dict) and data.get('type') == 'final_response')
+    assert final['content'] == 'The light is off.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_texts', [['Checking the lamp.', 'The light is off.'], []])
+async def test_chat_turn_releases_accepted_deltas_unchanged(terminal_texts):
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'Checking the lamp.'})
+        yield _event({'delta': 'The light is off.'})
+        yield _event({'type': 'metrics', 'data': {'round_texts': terminal_texts}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([{'role': 'user', 'content': 'turn off the ceiling light'}])]
+    frames = [data for _, data in _frames(chunks) if isinstance(data, dict)]
+    assert [f['delta'] for f in frames if 'delta' in f] == ['Checking the lamp.', 'The light is off.']
+    assert not any(f.get('type') == 'final_response' for f in frames)
+
+
+@pytest.mark.asyncio
 async def test_revised_terminal_prose_still_cannot_attest_execution():
     @with_completion_gate
     async def stream(messages):

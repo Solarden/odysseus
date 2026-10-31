@@ -746,6 +746,9 @@ async def run_teacher_inline(
                         if payload.get("thinking"):
                             continue
                         captured_text_parts.append(payload["delta"])
+                    if typ == "final_response" and isinstance(payload.get("content"), str):
+                        # The completion gate sends this in place of the deltas it withheld.
+                        captured_text_parts = [payload["content"]]
                     yield 'data: ' + json.dumps(payload) + '\n\n'
                     continue
             yield evt_str

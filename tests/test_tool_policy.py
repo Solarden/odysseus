@@ -3063,6 +3063,21 @@ def test_false_unavailable_tool_claim_detects_selected_calendar_tool():
     ) == "manage_calendar"
 
 
+@pytest.mark.parametrize("text", [
+    "I don't have access to a smart home / device control tool in this session, so I can't turn off "
+    "the living room ceiling light directly. I only have web search/fetch tools available right now.",
+    "I don't have a tool to control smart home devices (lights, switches, etc.) in this session — "
+    "only web search/fetch, scheduling, memory, and similar tools are available.",
+    "I'm not able to control smart home devices — I don't have a smart-home/IoT tool available in "
+    "this session, only things like web search/fetch.",
+])
+def test_false_unavailable_tool_claim_ignores_a_tool_named_as_available(text):
+    assert al._false_unavailable_tool_claim(
+        text,
+        {"web_search", "web_fetch", "ask_user", "update_plan"},
+    ) == ""
+
+
 def test_false_unavailable_tool_claim_ignores_unselected_calendar_tool():
     text = "I don't have access to calendar tools this turn."
 

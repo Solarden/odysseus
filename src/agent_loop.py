@@ -19585,12 +19585,18 @@ def _false_unavailable_tool_claim(text: str, selected_tools: Optional[Set[str]])
     if not text or not selected_tools:
         return ""
     plain = _strip_think_blocks(strip_tool_blocks(str(text))).lower()
-    if not re.search(
-        r"\b(?:don'?t|do not|can'?t|cannot|unable|no)\b.{0,90}"
-        r"\b(?:tool|tools|access|available|loaded|enabled|integration)\b",
-        plain,
-        re.I | re.S,
-    ):
+    # A domain counts only inside the negated clause: "no smart-home tool here, only web
+    # search" denies smart-home, and must not read as a claim that web search is missing.
+    plain = " | ".join(
+        claim.group(0) + re.match(r"[^.,;:!?\n—–]{0,60}", plain[claim.end():]).group(0)
+        for claim in re.finditer(
+            r"\b(?:don'?t|do not|can'?t|cannot|unable|no)\b[^.!?;\n—–]{0,90}"
+            r"\b(?:tool|tools|access|available|loaded|enabled|integration)\b",
+            plain,
+            re.I,
+        )
+    )
+    if not plain:
         return ""
     checks = (
         ("manage_calendar", r"\b(?:calendar|event|meeting|appointment|schedule|reminder)\b"),
