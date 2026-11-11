@@ -68,6 +68,8 @@ _PASSIVE_EXACT_PATHS = {
     "/api/email/urgency-state",
     # UI idle poll sibling of urgency-state; must not pre-empt background tasks.
     "/api/email/unread-state",
+    # Token clients polling a task's result (homelab triage-notify, right after the run starts).
+    "/api/codex/tasks/latest-run",
 }
 
 _PASSIVE_PREFIXES = (

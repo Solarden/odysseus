@@ -8,6 +8,11 @@ def test_email_unread_state_is_passive_like_urgency_state():
     assert should_track_interactive_request("/api/email/unread-state") is False
 
 
+def test_latest_run_poll_does_not_stop_the_run_it_reads():
+    assert should_track_interactive_request("/api/codex/tasks/latest-run") is False
+    assert should_track_interactive_request("/api/codex/tasks/pause", method="POST") is True
+
+
 def test_real_interactive_paths_still_tracked():
     assert should_track_interactive_request("/api/chat_stream") is True
     assert should_track_interactive_request("/api/email/messages") is True
