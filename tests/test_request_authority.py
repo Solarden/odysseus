@@ -385,9 +385,12 @@ def test_task_authority_column_migration_is_additive_and_idempotent(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_server_seeded_defaults_have_authority_but_legacy_rows_do_not_gain_it(monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_prompt, legacy_runs", [(None, True), ("Run bash", False)])
+async def test_server_seeded_defaults_have_authority_and_only_promptless_legacy_builtins_gain_it(
+        monkeypatch, tmp_path, legacy_prompt, legacy_runs):
     import core.database as database
     import routes.prefs_routes as preferences
+    import src.builtin_actions as actions
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from src.task_scheduler import TaskScheduler
@@ -396,11 +399,13 @@ async def test_server_seeded_defaults_have_authority_but_legacy_rows_do_not_gain
     sessions = sessionmaker(bind=engine)
     monkeypatch.setattr(database, "SessionLocal", sessions)
     monkeypatch.setattr(preferences, "_load_for_user", lambda owner: {})
+    handler = AsyncMock(return_value=("ok", True))
+    monkeypatch.setitem(actions.BUILTIN_ACTIONS, "tidy_sessions", handler)
     scheduler = TaskScheduler(session_manager=None)
     monkeypatch.setattr(scheduler, "ensure_assistant_defaults", AsyncMock())
     with sessions() as db:
         db.add(database.ScheduledTask(id="legacy", owner="alice", name="Legacy housekeeping",
-                                     task_type="action", action="tidy_sessions"))
+                                     task_type="action", action="tidy_sessions", prompt=legacy_prompt))
         db.commit()
     await scheduler.ensure_defaults("alice")
     with sessions() as db:
@@ -409,7 +414,12 @@ async def test_server_seeded_defaults_have_authority_but_legacy_rows_do_not_gain
         for task in tasks:
             grant = restore_task_authority(task.request_authority_json, task.prompt,
                 task.task_type, task.action, owner=task.owner)
-            assert grant.permits(task_operation(task.task_type, task.action, task.prompt)) == (task.id != "legacy")
+            assert grant.permits(task_operation(task.task_type, task.action, task.prompt)) == (
+                task.id != "legacy" or legacy_runs)
+        _, success = await scheduler._execute_action(db.get(database.ScheduledTask, "legacy"))
+
+    assert success == legacy_runs
+    assert handler.await_count == int(legacy_runs)
     engine.dispose()
 
 

@@ -2614,6 +2614,9 @@ class TaskScheduler:
                     db.delete(dupe)
                     removed_dupes.append(action)
 
+            from src.agent_runtime.authority import (
+                restore_task_authority, seal_task_authority, task_operation,
+            )
             for task in [t for t in builtin_tasks if t.id in kept_ids]:
                 defs = HOUSEKEEPING_DEFAULTS.get(task.action)
                 if not defs:
@@ -2701,8 +2704,16 @@ class TaskScheduler:
                 task.notifications_enabled = False
                 if (task.output_target or "session") == "session":
                     task.output_target = defs.get("output_target", "none")
+                # A built-in row older than the request_authority_json column has no
+                # snapshot, and _execute_action refuses it on every run. Without a prompt
+                # it is the same server-defined action seeding seals below; a prompt is
+                # user input, admitted only by the request that saves it.
+                if not task.prompt and not restore_task_authority(
+                        task.request_authority_json, task.prompt, task.task_type, task.action,
+                        owner=owner).permits(task_operation(task.task_type, task.action, task.prompt)):
+                    task.request_authority_json = seal_task_authority(
+                        task.prompt, task.task_type, task.action, owner=owner)
             seeded = []
-            from src.agent_runtime.authority import seal_task_authority
             for action, defs in HOUSEKEEPING_DEFAULTS.items():
                 if action in existing_actions:
                     continue
