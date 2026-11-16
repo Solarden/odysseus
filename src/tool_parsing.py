@@ -203,6 +203,17 @@ _GEMMA_TOOL_CALL_CLOSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Pattern 4b': Gemma's call written as text without the <|tool_call> markers,
+# usually fenced: ```mcp__x__HassTurnOff{name:<|"|>lamp<|"|>}```. Gemma's string
+# token <|"|> in the body is what tells it apart from prose like config{a: 1}.
+_GEMMA_STRING_TOKEN = '<|"|>'
+_GEMMA_BARE_CALL_RE = re.compile(r"(?<![\w.:-])(?i:call:)?([A-Za-z_][\w.-]{0,127})\{")
+_GEMMA_BARE_BODY_START_RE = re.compile(r"\s*(?:[A-Za-z_]\w*\s*:|\})")
+_GEMMA_BARE_KEY_RE = re.compile(r"([{,]\s*)([A-Za-z_]\w*)\s*:")
+# Scan bounds keep a reply full of `x{` openers from driving a quadratic rescan.
+_GEMMA_BARE_BODY_MAX = 4000
+_GEMMA_BARE_CANDIDATES_MAX = 32
+
 # Native Qwen markup shares the same non-nesting delimiter grammar as the
 # XML helpers. Literal closers keep whitespace and opener floods linear;
 # values are stripped by the caller, as in the original regex path.
@@ -1788,12 +1799,122 @@ def _iter_gemma_fallback_items(body):
         pos = end
 
 
-def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
-    """Parse a Gemma-style call:tool_name{...} block into a ToolBlock."""
-    tool_name = tool_name.strip().lower().replace("-", "_")
+def _gemma_bare_body_end(text: str, open_brace: int) -> Optional[int]:
+    """Index just past the brace that closes ``text[open_brace]``, skipping
+    <|"|>-quoted strings; None when it does not close within the scan bound."""
+    limit = min(len(text), open_brace + _GEMMA_BARE_BODY_MAX)
+    depth = 0
+    i = open_brace
+
+    while i < limit:
+        if text.startswith(_GEMMA_STRING_TOKEN, i):
+            close = text.find(_GEMMA_STRING_TOKEN, i + len(_GEMMA_STRING_TOKEN), limit)
+            if close < 0:
+                return None
+
+            i = close + len(_GEMMA_STRING_TOKEN)
+            continue
+
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+
+        i += 1
+
+    return None
+
+
+def _iter_gemma_bare_calls(text: str):
+    """Yield ``(tool_name, body, start, end)`` for each Gemma call leaked as text
+    without markers; the span grows over a fence that tightly wraps the call."""
+    if not isinstance(text, str) or _GEMMA_STRING_TOKEN not in text:
+        return
+
+    pos = 0
+    next_token = text.find(_GEMMA_STRING_TOKEN)
+    scans = 0
+
+    while scans < _GEMMA_BARE_CANDIDATES_MAX:
+        m = _GEMMA_BARE_CALL_RE.search(text, pos)
+        if not m:
+            return
+
+        pos = m.end()
+        if next_token != -1 and next_token < m.end():
+            next_token = text.find(_GEMMA_STRING_TOKEN, m.end())
+        if next_token == -1:
+            return
+
+        # Cheap rejections don't count toward the cap: no token in reach, or a
+        # body that does not open the way Gemma's does (`{key:` or `{}`).
+        if next_token > m.end() + _GEMMA_BARE_BODY_MAX or not _GEMMA_BARE_BODY_START_RE.match(text, m.end()):
+            continue
+
+        scans += 1
+        end = _gemma_bare_body_end(text, m.end() - 1)
+        if end is None or _GEMMA_STRING_TOKEN not in text[m.end():end]:
+            continue
+
+        # A whole call nested in this body is the real one; resume from inside.
+        inner = _GEMMA_BARE_CALL_RE.search(text, m.end(), end)
+
+        if inner and _GEMMA_BARE_BODY_START_RE.match(text, inner.end()):
+            inner_end = _gemma_bare_body_end(text, inner.end() - 1)
+            if inner_end is not None and _GEMMA_STRING_TOKEN in text[inner.end():inner_end]:
+                continue
+
+        start, span_end = m.start(), end
+        m_open = re.search(r"```[ \t]*$", text[:start])
+        m_close = re.match(r"\s*```", text[end:])
+        if m_open and m_close:
+            start, span_end = m_open.start(), end + m_close.end()
+
+        yield m.group(1), text[m.end() - 1:end], start, span_end
+        pos = span_end
+
+
+def _gemma_body_to_json(body: str) -> Optional[str]:
+    """JSON text for a body whose strings are <|"|>-delimited, quoting bare keys
+    only outside those strings; None when a string is left open."""
+    parts = body.split(_GEMMA_STRING_TOKEN)
+    if len(parts) % 2 == 0:
+        return None
+
+    return "".join(
+        json.dumps(part) if i % 2 else _GEMMA_BARE_KEY_RE.sub(r'\1"\2":', part)
+        for i, part in enumerate(parts)
+    )
+
+
+def _parse_gemma_tool_call(tool_name: str, body: str, normalize_name: bool = True) -> Optional[ToolBlock]:
+    """Parse a Gemma-style call:tool_name{...} block into a ToolBlock.
+
+    ``normalize_name=False`` keeps the name's case, which MCP tool names need
+    (mcp__<server>__HassTurnOff). For API models `_resolve_tool_blocks` drops
+    a name the turn did not offer; a textual model's call is not filtered.
+    """
+    tool_name = tool_name.strip()
+    if normalize_name:
+        tool_name = tool_name.lower().replace("-", "_")
     body = body.strip()
     if not body:
         return None
+
+    if _GEMMA_STRING_TOKEN in body:
+        converted = _gemma_body_to_json(body)
+
+        try:
+            params = json.loads(converted) if converted else None
+        except json.JSONDecodeError:
+            params = None
+
+        if isinstance(params, dict):
+            from src.tool_schemas import function_call_to_tool_block
+
+            return function_call_to_tool_block(tool_name, json.dumps(params))
 
     # Replace custom Gemma string delimiters with standard quotes
     body = body.replace('<|"|>', '"').replace('<|"', '"').replace('"|>', '"')
@@ -2334,6 +2455,15 @@ def parse_tool_blocks(
             if block:
                 blocks.append(block)
 
+    # Pattern 4b': the same call leaked without markers. Gemma's string token
+    # never appears in an illustrative example, so recover regardless of
+    # skip_fenced, like 5b.
+    if not blocks:
+        for tool_name, body, _start, _end in _iter_gemma_bare_calls(text):
+            block = _parse_gemma_tool_call(tool_name, body, normalize_name=False)
+            if block:
+                blocks.append(block)
+
     # Pattern 4c: <function_model> wrapper from local MLX/Exo models.
     if not blocks:
         for _ms, inner_start, inner_end, _me in _iter_delimited(
@@ -2427,6 +2557,9 @@ def strip_tool_blocks(
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
     cleaned = _strip_delimited(cleaned, _GEMMA_TOOL_CALL_OPEN_RE, _GEMMA_TOOL_CALL_CLOSE_RE)
+    bare_spans = [(start, end) for _name, _body, start, end in _iter_gemma_bare_calls(cleaned)]
+    for start, end in reversed(bare_spans):
+        cleaned = cleaned[:start] + cleaned[end:]
     cleaned = _strip_delimited(cleaned, _FUNCTION_MODEL_OPEN_RE, _FUNCTION_MODEL_CLOSE_RE)
     cleaned = _strip_raw_openai_tool_call_json(cleaned)
     declared_xml_calls = _parse_declared_direct_xml_calls(
