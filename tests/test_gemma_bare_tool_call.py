@@ -114,6 +114,25 @@ def test_resolve_runs_an_offered_leaked_call_for_an_api_model():
     assert [(b.tool_type, json.loads(b.content)) for b in blocks] == [(_TURN_OFF, {"name": "living room light"})]
 
 
+def test_resolve_runs_a_python_style_mcp_call_with_its_name_case():
+    # Verbatim reply, 2026-11-16 09:22, dropped then as unoffered 'mcp__9114454f__hassturnoff'.
+    text = "```python\nmcp__9114454f__HassTurnOff(area='living room', domain=['light'])\n```"
+
+    blocks, _, _ = _resolve_tool_blocks(
+        text, [], 1, is_api_model=True, offered_tool_names={_TURN_OFF, "web_search"},
+    )
+
+    assert [(b.tool_type, json.loads(b.content)) for b in blocks] == [
+        (_TURN_OFF, {"area": "living room", "domain": ["light"]}),
+    ]
+
+
+def test_marker_form_keeps_the_mcp_name_case():
+    text = '<|tool_call>call:mcp__9114454f__HassTurnOff{name:<|"|>living room light<|"|>}<tool_call|>'
+
+    assert [b.tool_type for b in parse_tool_blocks(text, skip_fenced=True)] == [_TURN_OFF]
+
+
 def test_resolve_drops_a_leaked_call_that_was_not_offered():
     text = '```mcp__9114454f__HassTurnOff{name:<|"|>living room light<|"|>}```'
 

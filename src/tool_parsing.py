@@ -1424,7 +1424,9 @@ def _parse_qwen3_native_text_call(
                     args[key] = ast.literal_eval(raw_value.strip())
                 except (ValueError, SyntaxError):
                     args[key] = raw_value.strip().strip("'\"")
-            block = declared_or_builtin(normalized_name, args)
+
+            # MCP names keep their case: the offered-tool check matches them exactly.
+            block = declared_or_builtin(name if mapped_name.startswith("mcp__") else normalized_name, args)
             if block:
                 return block
 
@@ -1889,15 +1891,15 @@ def _gemma_body_to_json(body: str) -> Optional[str]:
     )
 
 
-def _parse_gemma_tool_call(tool_name: str, body: str, normalize_name: bool = True) -> Optional[ToolBlock]:
+def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
     """Parse a Gemma-style call:tool_name{...} block into a ToolBlock.
 
-    ``normalize_name=False`` keeps the name's case, which MCP tool names need
-    (mcp__<server>__HassTurnOff). For API models `_resolve_tool_blocks` drops
-    a name the turn did not offer; a textual model's call is not filtered.
+    MCP names keep their case (mcp__<server>__HassTurnOff): for API models
+    `_resolve_tool_blocks` drops a name the turn did not offer, matching it
+    exactly; a textual model's call is not filtered.
     """
     tool_name = tool_name.strip()
-    if normalize_name:
+    if not tool_name.lower().startswith("mcp__"):
         tool_name = tool_name.lower().replace("-", "_")
     body = body.strip()
     if not body:
@@ -2460,7 +2462,7 @@ def parse_tool_blocks(
     # skip_fenced, like 5b.
     if not blocks:
         for tool_name, body, _start, _end in _iter_gemma_bare_calls(text):
-            block = _parse_gemma_tool_call(tool_name, body, normalize_name=False)
+            block = _parse_gemma_tool_call(tool_name, body)
             if block:
                 blocks.append(block)
 
